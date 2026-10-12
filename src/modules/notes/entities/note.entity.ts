@@ -16,6 +16,8 @@ export type NoteDocument = HydratedDocument<Note>;
   collection: 'notes',
 })
 export class Note {
+  _id?: Types.ObjectId;
+
   @Prop({ required: true, type: Types.ObjectId, ref: 'User' })
   userId: Types.ObjectId;
 
@@ -30,6 +32,9 @@ export class Note {
 
   @Prop({ type: String, default: 'block' })
   docType: string;
+
+  @Prop({ type: String, default: null })
+  docUrl: string;
 
   @Prop({ type: Object, default: null })
   docData: any;

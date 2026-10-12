@@ -28,6 +28,10 @@ export class CreateNoteDto {
   @IsOptional()
   docType?: string;
 
+  @IsString()
+  @IsOptional()
+  docUrl?: string;
+
   @IsOptional()
   docData?: any;
 
@@ -62,6 +66,10 @@ export class UpdateNoteDto {
   @IsString()
   @IsOptional()
   docType?: string;
+
+  @IsString()
+  @IsOptional()
+  docUrl?: string;
 
   @IsOptional()
   docData?: any;
