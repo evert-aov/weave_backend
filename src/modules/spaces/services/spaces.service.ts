@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { SpacesRepository } from '../repositories/spaces.repository';
@@ -86,20 +86,101 @@ export class SpacesService {
       throw new NotFoundException('Space not found');
     }
     const oldName = space.name;
+    const oldPath = space.path || oldName;
     const newName = updateSpaceDto.name ? updateSpaceDto.name.trim() : oldName;
+
+    const allSpaces = await this.spacesRepository.findAllByUser(userId);
+
+    let newParentId: Types.ObjectId | null = space.parentId ? new Types.ObjectId(space.parentId.toString()) : null;
+    let newPath = space.path || newName;
+
+    if (updateSpaceDto.parentId !== undefined) {
+      if (updateSpaceDto.parentId && Types.ObjectId.isValid(updateSpaceDto.parentId)) {
+        const targetParentIdStr = updateSpaceDto.parentId.toString();
+        if (targetParentIdStr === id) {
+          throw new BadRequestException('A directory cannot be its own parent');
+        }
+
+        // Prevenir ciclos: no mover a un descendiente propio
+        const descendantIds = new Set<string>();
+        const findDescendants = (pid: string) => {
+          for (const s of allSpaces) {
+            if (s.parentId && s.parentId.toString() === pid) {
+              descendantIds.add(s._id.toString());
+              findDescendants(s._id.toString());
+            }
+          }
+        };
+        findDescendants(id);
+
+        if (descendantIds.has(targetParentIdStr)) {
+          throw new BadRequestException('Cannot move a directory into one of its subdirectories');
+        }
+
+        const parentSpace = allSpaces.find((s) => s._id.toString() === targetParentIdStr);
+        if (parentSpace) {
+          newParentId = parentSpace._id;
+          newPath = `${parentSpace.path || parentSpace.name}/${newName}`;
+        }
+      } else {
+        newParentId = null;
+        newPath = newName;
+      }
+    } else if (oldName !== newName) {
+      // Si solo cambió el nombre, recalcular el path con el mismo padre
+      if (space.parentId) {
+        const parentSpace = allSpaces.find((s) => s._id.toString() === space.parentId!.toString());
+        if (parentSpace) {
+          newPath = `${parentSpace.path || parentSpace.name}/${newName}`;
+        } else {
+          newPath = newName;
+        }
+      } else {
+        newPath = newName;
+      }
+    }
 
     const updateData: any = {
       name: newName,
+      path: newPath,
+      parentId: newParentId,
     };
     if (updateSpaceDto.color !== undefined) updateData.color = updateSpaceDto.color;
     if (updateSpaceDto.icon !== undefined) updateData.icon = updateSpaceDto.icon;
-    if (updateSpaceDto.parentId !== undefined) {
-      updateData.parentId = updateSpaceDto.parentId && Types.ObjectId.isValid(updateSpaceDto.parentId)
-        ? new Types.ObjectId(updateSpaceDto.parentId)
-        : null;
-    }
 
     const updated = await this.spacesRepository.update(id, userId, updateData);
+
+    // Actualizar recursivamente las rutas de todos los descendientes
+    const updateDescendantPaths = async (parentIdStr: string, parentPath: string) => {
+      for (const s of allSpaces) {
+        if (s.parentId && s.parentId.toString() === parentIdStr) {
+          const childNewPath = `${parentPath}/${s.name}`;
+          await this.spacesRepository.update(s._id.toString(), userId, { path: childNewPath });
+
+          if (s.path && s.path !== childNewPath) {
+            await this.noteModel.updateMany(
+              { userId: new Types.ObjectId(userId) as any, space: s.path },
+              { $set: { space: childNewPath } },
+            ).exec();
+          }
+          await updateDescendantPaths(s._id.toString(), childNewPath);
+        }
+      }
+    };
+    await updateDescendantPaths(id, newPath);
+
+    // Sincronizar las notas que apuntaban al directorio anterior
+    if (oldPath !== newPath) {
+      await this.noteModel.updateMany(
+        {
+          userId: new Types.ObjectId(userId) as any,
+          space: oldPath,
+        },
+        {
+          $set: { space: newPath },
+        },
+      ).exec();
+    }
 
     if (oldName !== newName) {
       await this.noteModel.updateMany(
@@ -108,7 +189,7 @@ export class SpacesService {
           space: oldName,
         },
         {
-          $set: { space: newName },
+          $set: { space: newPath },
         },
       ).exec();
     }
