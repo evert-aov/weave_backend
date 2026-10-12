@@ -21,6 +21,10 @@ export class SpacesService {
    * Obtiene todos los espacios del usuario. Si el usuario aún no tiene espacios,
    * crea automáticamente los espacios iniciales en MongoDB.
    */
+  /**
+   * Obtiene todos los espacios del usuario. Si el usuario aún no tiene espacios,
+   * crea automáticamente los espacios iniciales en MongoDB.
+   */
   async getSpaces(userId: string) {
     let spaces = await this.spacesRepository.findAllByUser(userId);
     if (spaces.length === 0) {
@@ -28,12 +32,16 @@ export class SpacesService {
       const defaultA = await this.spacesRepository.create({
         userId: new Types.ObjectId(userId) as any,
         name: 'Research',
+        path: 'Research',
+        parentId: null,
         color: 'indigo',
         icon: 'folder',
       });
       const defaultB = await this.spacesRepository.create({
         userId: new Types.ObjectId(userId) as any,
         name: 'Personal',
+        path: 'Personal',
+        parentId: null,
         color: 'teal',
         icon: 'folder',
       });
@@ -43,12 +51,26 @@ export class SpacesService {
   }
 
   /**
-   * Crea un nuevo espacio/directorio en MongoDB.
+   * Crea un nuevo espacio/directorio o subdirectorio en MongoDB.
    */
   async createSpace(userId: string, createSpaceDto: CreateSpaceDto) {
+    const trimmedName = createSpaceDto.name.trim();
+    let parentObjectId: Types.ObjectId | null = null;
+    let computedPath = trimmedName;
+
+    if (createSpaceDto.parentId && Types.ObjectId.isValid(createSpaceDto.parentId)) {
+      const parent = await this.spacesRepository.findByIdAndUser(createSpaceDto.parentId, userId);
+      if (parent) {
+        parentObjectId = parent._id;
+        computedPath = `${parent.path || parent.name}/${trimmedName}`;
+      }
+    }
+
     return this.spacesRepository.create({
       userId: new Types.ObjectId(userId) as any,
-      name: createSpaceDto.name.trim(),
+      name: trimmedName,
+      parentId: parentObjectId,
+      path: computedPath,
       color: createSpaceDto.color || 'indigo',
       icon: createSpaceDto.icon || 'folder',
     });
@@ -66,10 +88,18 @@ export class SpacesService {
     const oldName = space.name;
     const newName = updateSpaceDto.name ? updateSpaceDto.name.trim() : oldName;
 
-    const updated = await this.spacesRepository.update(id, userId, {
-      ...updateSpaceDto,
+    const updateData: any = {
       name: newName,
-    });
+    };
+    if (updateSpaceDto.color !== undefined) updateData.color = updateSpaceDto.color;
+    if (updateSpaceDto.icon !== undefined) updateData.icon = updateSpaceDto.icon;
+    if (updateSpaceDto.parentId !== undefined) {
+      updateData.parentId = updateSpaceDto.parentId && Types.ObjectId.isValid(updateSpaceDto.parentId)
+        ? new Types.ObjectId(updateSpaceDto.parentId)
+        : null;
+    }
+
+    const updated = await this.spacesRepository.update(id, userId, updateData);
 
     if (oldName !== newName) {
       await this.noteModel.updateMany(
@@ -87,13 +117,32 @@ export class SpacesService {
   }
 
   /**
-   * Elimina un espacio/directorio de la base de datos.
+   * Elimina un espacio/directorio y todos sus subdirectorios de la base de datos.
    */
   async deleteSpace(id: string, userId: string) {
-    const deleted = await this.spacesRepository.delete(id, userId);
-    if (!deleted) {
+    const space = await this.spacesRepository.findByIdAndUser(id, userId);
+    if (!space) {
       throw new NotFoundException('Space not found');
     }
-    return { success: true, message: 'Space deleted successfully' };
+
+    const allSpaces = await this.spacesRepository.findAllByUser(userId);
+    const toDeleteIds: string[] = [id];
+
+    const findDescendants = (parentId: string) => {
+      const children = allSpaces.filter(
+        (s) => s.parentId && s.parentId.toString() === parentId,
+      );
+      for (const child of children) {
+        toDeleteIds.push(child._id.toString());
+        findDescendants(child._id.toString());
+      }
+    };
+    findDescendants(id);
+
+    for (const deleteId of toDeleteIds) {
+      await this.spacesRepository.delete(deleteId, userId);
+    }
+
+    return { success: true, message: 'Space and subdirectories deleted successfully' };
   }
 }

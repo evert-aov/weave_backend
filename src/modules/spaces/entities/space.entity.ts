@@ -21,6 +21,15 @@ export class Space {
   @Prop({ required: true, trim: true })
   name: string;
 
+  @Prop({ type: Types.ObjectId, ref: 'Space', default: null })
+  parentId: Types.ObjectId | null;
+
+  @Prop({ default: '' })
+  path: string;
+
+  @Prop({ default: 0 })
+  order: number;
+
   @Prop({ default: 'indigo' })
   color: string;
 
@@ -29,4 +38,5 @@ export class Space {
 }
 
 export const SpaceSchema = SchemaFactory.createForClass(Space);
+SpaceSchema.index({ userId: 1, parentId: 1, order: 1 });
 SpaceSchema.index({ userId: 1, name: 1 });

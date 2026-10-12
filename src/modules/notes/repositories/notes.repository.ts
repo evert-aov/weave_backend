@@ -23,7 +23,11 @@ export class NotesRepository {
       userId: new Types.ObjectId(userId) as any,
     };
     if (space && space !== 'all') {
-      filter.space = space;
+      const escaped = space.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter.$or = [
+        { space: space },
+        { space: new RegExp(`^${escaped}(/.*)?$`, 'i') },
+      ];
     }
     return this.noteModel.find(filter).sort({ updatedAt: -1 }).exec();
   }

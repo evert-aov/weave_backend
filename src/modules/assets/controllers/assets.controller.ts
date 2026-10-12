@@ -36,14 +36,21 @@ export class AssetsController {
         filename: (req, file, cb) => {
           const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
           const ext = path.extname(file.originalname);
-          cb(null, `img-${uniqueSuffix}${ext}`);
+          cb(null, `file-${uniqueSuffix}${ext}`);
         },
       }),
       fileFilter: (req, file, cb) => {
-        if (!file.mimetype.match(/\/(jpg|jpeg|png|gif|webp|svg\+xml)$/)) {
+        const allowedExts = /\.(jpg|jpeg|png|gif|webp|svg|pdf|doc|docx|xls|xlsx|ppt|pptx)$/i;
+        const ext = path.extname(file.originalname);
+        if (
+          !file.mimetype.match(
+            /^(image\/(jpeg|png|gif|webp|svg\+xml)|application\/(pdf|msword|vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation)|vnd\.ms-excel|vnd\.ms-powerpoint))$/i,
+          ) &&
+          !allowedExts.test(ext)
+        ) {
           return cb(
             new BadRequestException(
-              'Unsupported file type. Only JPG, PNG, WEBP, GIF, and SVG are allowed.',
+              'Unsupported file type. Only JPG, PNG, WEBP, GIF, SVG, PDF, Word (.doc, .docx), Excel (.xls, .xlsx), and PowerPoint (.ppt, .pptx) are allowed.',
             ),
             false,
           );
@@ -51,7 +58,7 @@ export class AssetsController {
         cb(null, true);
       },
       limits: {
-        fileSize: 10 * 1024 * 1024, // Límite máximo de 10 MB
+        fileSize: 50 * 1024 * 1024, // Límite máximo de 50 MB
       },
     }),
   )

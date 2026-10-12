@@ -10,6 +10,10 @@ export class CreateSpaceDto {
 
   @IsString()
   @IsOptional()
+  parentId?: string | null;
+
+  @IsString()
+  @IsOptional()
   color?: string;
 
   @IsString()
@@ -24,6 +28,10 @@ export class UpdateSpaceDto {
   @IsString()
   @IsOptional()
   name?: string;
+
+  @IsString()
+  @IsOptional()
+  parentId?: string | null;
 
   @IsString()
   @IsOptional()
