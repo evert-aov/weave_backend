@@ -24,6 +24,13 @@ export class CreateNoteDto {
   @IsOptional()
   space?: string;
 
+  @IsString()
+  @IsOptional()
+  docType?: string;
+
+  @IsOptional()
+  docData?: any;
+
   @IsArray()
   @IsString({ each: true })
   @IsOptional()
@@ -51,6 +58,13 @@ export class UpdateNoteDto {
   @IsString()
   @IsOptional()
   space?: string;
+
+  @IsString()
+  @IsOptional()
+  docType?: string;
+
+  @IsOptional()
+  docData?: any;
 
   @IsArray()
   @IsString({ each: true })

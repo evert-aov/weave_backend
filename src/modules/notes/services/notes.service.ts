@@ -63,9 +63,11 @@ export class NotesService {
    * Crea una nueva nota con bloques predeterminados si no se proporcionan.
    */
   async createNote(userId: string, createNoteDto: CreateNoteDto) {
+    const docType = createNoteDto.docType || 'block';
     const initialBlocks: Block[] = createNoteDto.blocks?.length
       ? (createNoteDto.blocks as Block[])
-      : [
+      : docType === 'block'
+      ? [
           {
             id: `b-${Date.now()}-1`,
             type: 'text',
@@ -75,13 +77,16 @@ export class NotesService {
             },
             metadata: {},
           },
-        ];
+        ]
+      : [];
 
     return this.notesRepository.create({
       userId: Types.ObjectId.isValid(userId) ? new Types.ObjectId(userId) : (userId as any),
       title: createNoteDto.title,
       lead: createNoteDto.lead ?? '',
       space: createNoteDto.space ?? 'Research',
+      docType: docType,
+      docData: createNoteDto.docData ?? null,
       tags: createNoteDto.tags ?? [],
       blocks: initialBlocks,
     });
@@ -98,7 +103,7 @@ export class NotesService {
 
     const updated = await this.notesRepository.update(id, userId, {
       ...updateNoteDto,
-      blocks: updateNoteDto.blocks ? (updateNoteDto.blocks as Block[]) : note.blocks,
+      blocks: updateNoteDto.blocks !== undefined ? (updateNoteDto.blocks as Block[]) : note.blocks,
     });
 
     return updated;

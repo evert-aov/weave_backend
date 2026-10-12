@@ -28,6 +28,12 @@ export class Note {
   @Prop({ default: 'Research' })
   space: string;
 
+  @Prop({ type: String, default: 'block' })
+  docType: string;
+
+  @Prop({ type: Object, default: null })
+  docData: any;
+
   @Prop({ type: [String], default: [] })
   tags: string[];
 
