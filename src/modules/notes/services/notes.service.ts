@@ -254,6 +254,32 @@ export class NotesService {
           },
         },
       };
+    } else if (docType === 'univer_canvas') {
+      const defaultPageId = `canvas-page-${noteId}-0`;
+      return {
+        id: `univer-canvas-${noteId}`,
+        title: title || 'Nuevo Lienzo Univer',
+        pageSize: {
+          width: 1920,
+          height: 1080,
+        },
+        body: {
+          pages: {
+            [defaultPageId]: {
+              id: defaultPageId,
+              pageType: 'slide',
+              zIndex: 0,
+              title: 'Lienzo',
+              description: '',
+              pageBackgroundFill: {
+                rgb: 'rgb(248,250,252)',
+              },
+              pageElements: {},
+            },
+          },
+          pageOrder: [defaultPageId],
+        },
+      };
     }
     return null;
   }
