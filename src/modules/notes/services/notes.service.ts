@@ -169,7 +169,17 @@ export class NotesService {
         notes = [welcomeNote];
       }
     }
-    return notes;
+    // Hidratar docData para cada nota especializada para que la carga inicial sea completa e inmediata
+    return notes.map((n) => {
+      const noteObj: any = n.toObject ? n.toObject() : { ...n };
+      if (noteObj.docType && noteObj.docType !== 'block') {
+        const physicalData = this.readPhysicalDoc(noteObj._id.toString(), noteObj.docType);
+        if (physicalData !== null) {
+          noteObj.docData = physicalData;
+        }
+      }
+      return noteObj;
+    });
   }
 
   /**
@@ -262,11 +272,20 @@ export class NotesService {
 
     if (effectiveDocType !== 'block') {
       if (updateNoteDto.docData !== undefined && updateNoteDto.docData !== null) {
+        if (updateNoteDto.title && typeof updateNoteDto.docData === 'object') {
+          updateNoteDto.docData.title = updateNoteDto.title;
+        }
         const docUrl = this.writePhysicalDoc(id, effectiveDocType, updateNoteDto.docData);
         updateNoteDto.docUrl = docUrl;
         memoryDocData = updateNoteDto.docData;
         // Evitar guardar docData pesado en MongoDB
         updateNoteDto.docData = null;
+      } else if (updateNoteDto.title) {
+        const existingData = this.readPhysicalDoc(id, effectiveDocType);
+        if (existingData && typeof existingData === 'object') {
+          existingData.title = updateNoteDto.title;
+          this.writePhysicalDoc(id, effectiveDocType, existingData);
+        }
       }
     }
 

@@ -65,7 +65,7 @@ export class NotesRepository {
           userId: new Types.ObjectId(userId) as any,
         },
         { $set: updateData },
-        { new: true },
+        { returnDocument: 'after' },
       )
       .exec();
   }
@@ -96,7 +96,7 @@ export class NotesRepository {
           userId: new Types.ObjectId(userId) as any,
         },
         { $push: { blocks: block } } as any,
-        { new: true },
+        { returnDocument: 'after' },
       )
       .exec();
   }
@@ -113,7 +113,7 @@ export class NotesRepository {
           userId: new Types.ObjectId(userId) as any,
         },
         { $pull: { blocks: { id: blockId } } } as any,
-        { new: true },
+        { returnDocument: 'after' },
       )
       .exec();
   }
