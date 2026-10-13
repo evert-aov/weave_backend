@@ -136,6 +136,32 @@ export class NotesService {
           viewBackgroundColor: '#ffffff',
         },
       };
+    } else if (docType === 'slide') {
+      const t = title || 'Nueva Presentación';
+      return {
+        id: `slide-${noteId}`,
+        title: t,
+        pageSize: {
+          width: 960,
+          height: 540,
+        },
+        body: {
+          pages: {
+            [`page-${noteId}-0`]: {
+              id: `page-${noteId}-0`,
+              pageType: 0,
+              zIndex: 0,
+              title: 'Diapositiva 1',
+              description: '',
+              pageBackgroundFill: {
+                rgb: 'rgb(255,255,255)',
+              },
+              pageElements: {},
+            },
+          },
+          pageOrder: [`page-${noteId}-0`],
+        },
+      };
     }
     return null;
   }
