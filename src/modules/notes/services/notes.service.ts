@@ -67,7 +67,7 @@ export class NotesService {
           fs.unlinkSync(filePath);
         }
       } else {
-        const types = ['sheet', 'doc', 'canvas'];
+        const types = ['sheet', 'doc', 'canvas', 'slide'];
         for (const t of types) {
           const fp = this.getDocFilePath(noteId, t);
           if (fs.existsSync(fp)) {
@@ -137,148 +137,9 @@ export class NotesService {
         },
       };
     } else if (docType === 'slide') {
-      const t = title || 'Nueva Presentación';
-      const initialSlideId = `slide-${noteId}-0`;
       return {
-        id: `slide-${noteId}`,
-        name: t,
-        appVersion: '1.0.4',
-        locale: 'enUS',
-        defaultPageSize: { width: 960, height: 540 },
-        slideOrder: [initialSlideId],
-        slides: {
-          [initialSlideId]: {
-            id: initialSlideId,
-            pageType: 'slide',
-            name: 'Slide 1',
-            masterPageId: 'master-default',
-            layoutPageId: 'layout-title-body',
-            elementOrder: [],
-            elements: {},
-            showMasterSp: true,
-          },
-        },
-        activeSlideId: initialSlideId,
-        theme: {
-          id: 'office',
-          name: 'Office Theme',
-          colorScheme: {
-            dk1: '#000000',
-            lt1: '#ffffff',
-            dk2: '#44546a',
-            lt2: '#e7e6e6',
-            acc1: '#4472c4',
-            acc2: '#ed7d31',
-            acc3: '#a5a5a5',
-            acc4: '#ffc000',
-            acc5: '#5b9bd5',
-            acc6: '#70ad47',
-            hlink: '#0563c1',
-            folHlink: '#954f72',
-          },
-          fontScheme: { heading: 'Calibri Light', body: 'Calibri' },
-        },
-        masterPageOrder: ['master-default'],
-        masterPages: {
-          'master-default': {
-            id: 'master-default',
-            pageType: 'master',
-            name: 'Office Theme',
-            pageSize: { width: 960, height: 540 },
-            elementOrder: [],
-            elements: {},
-            background: { type: 'solid', color: '#ffffff' },
-          },
-        },
-        layoutPageOrder: [
-          'layout-title',
-          'layout-title-body',
-          'layout-blank',
-        ],
-        layoutPages: {
-          'layout-title': {
-            id: 'layout-title',
-            pageType: 'layout',
-            layoutType: 'title',
-            name: 'Title Slide',
-            masterPageId: 'master-default',
-            pageSize: { width: 960, height: 540 },
-            elementOrder: ['ph-center-title', 'ph-subtitle'],
-            elements: {
-              'ph-center-title': {
-                id: 'ph-center-title',
-                type: 'placeholder',
-                transform: { left: 48, top: 151.2, width: 864, height: 100 },
-                placeholder: { id: 'ph-center-title', type: 'centerTitle' },
-              },
-              'ph-subtitle': {
-                id: 'ph-subtitle',
-                type: 'placeholder',
-                transform: { left: 48, top: 267.2, width: 864, height: 56 },
-                placeholder: { id: 'ph-subtitle', type: 'subtitle' },
-              },
-            },
-          },
-          'layout-title-body': {
-            id: 'layout-title-body',
-            pageType: 'layout',
-            layoutType: 'titleAndBody',
-            name: 'Title and Content',
-            masterPageId: 'master-default',
-            pageSize: { width: 960, height: 540 },
-            elementOrder: ['ph-title', 'ph-body'],
-            elements: {
-              'ph-title': {
-                id: 'ph-title',
-                type: 'placeholder',
-                transform: { left: 48, top: 32, width: 864, height: 76 },
-                placeholder: { id: 'ph-title', type: 'title' },
-              },
-              'ph-body': {
-                id: 'ph-body',
-                type: 'placeholder',
-                transform: { left: 48, top: 128, width: 864, height: 380 },
-                placeholder: { id: 'ph-body', type: 'body' },
-              },
-            },
-          },
-          'layout-blank': {
-            id: 'layout-blank',
-            pageType: 'layout',
-            layoutType: 'blank',
-            name: 'Blank',
-            masterPageId: 'master-default',
-            pageSize: { width: 960, height: 540 },
-            elementOrder: [],
-            elements: {},
-          },
-        },
-      };
-    } else if (docType === 'univer_canvas') {
-      const defaultPageId = `canvas-page-${noteId}-0`;
-      return {
-        id: `univer-canvas-${noteId}`,
-        title: title || 'Nuevo Lienzo Univer',
-        pageSize: {
-          width: 1920,
-          height: 1080,
-        },
-        body: {
-          pages: {
-            [defaultPageId]: {
-              id: defaultPageId,
-              pageType: 'slide',
-              zIndex: 0,
-              title: 'Lienzo',
-              description: '',
-              pageBackgroundFill: {
-                rgb: 'rgb(248,250,252)',
-              },
-              pageElements: {},
-            },
-          },
-          pageOrder: [defaultPageId],
-        },
+        format: 'pptx',
+        base64: '',
       };
     }
     return null;
