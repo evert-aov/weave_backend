@@ -101,10 +101,32 @@ export class NotesService {
         id: `doc-${noteId}`,
         title: t,
         body: {
-          dataStream: `${t}\r\n`,
+          dataStream: '\r\n',
+          textRuns: [],
           paragraphs: [
-            { paragraphId: 'p1', startIndex: 0, paragraphStyle: { headingId: 'k1' } },
+            {
+              startIndex: 0,
+              paragraphId: `p-${noteId}-0`,
+              paragraphStyle: {},
+            },
           ],
+          sectionBreaks: [
+            {
+              startIndex: 1,
+              sectionId: `s-${noteId}-0`,
+            },
+          ],
+        },
+        documentStyle: {
+          pageSize: {
+            width: 794,
+            height: 1124,
+          },
+          documentFlavor: 1,
+          marginTop: 72,
+          marginBottom: 72,
+          marginRight: 72,
+          marginLeft: 72,
         },
       };
     } else if (docType === 'canvas') {
