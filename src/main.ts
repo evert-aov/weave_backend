@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import * as fs from 'fs';
 import * as path from 'path';
 import { AppModule } from './app.module';
@@ -14,7 +15,12 @@ async function bootstrap() {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
 
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  // Permitir payloads grandes: las presentaciones .pptx se envían en base64
+  // (aproximadamente 4/3 del tamaño del archivo) dentro del body JSON.
+  app.useBodyParser('json', { limit: '100mb' });
+  app.useBodyParser('urlencoded', { limit: '100mb', extended: true });
 
   // Habilitar CORS para permitir peticiones del cliente Angular
   app.enableCors({

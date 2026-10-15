@@ -14,8 +14,10 @@ import { Block } from '../entities/block.entity';
  * Servicio de dominio para Gestión de Notas y Bloques.
  * Implementa las reglas de negocio, ordenación y validaciones.
  * Almacena documentos 'block' (todo en uno) directamente en MongoDB y almacena
- * documentos especializados ('sheet', 'doc', 'canvas') en archivos físicos en el disco,
+ * documentos especializados ('sheet', 'doc', 'canvas') en archivos físicos JSON en el disco,
  * guardando solo el enlace 'docUrl' en MongoDB para no sobrecargar la base de datos.
+ * Las presentaciones ('slide') se guardan como archivo binario .pptx real en disco,
+ * almacenando únicamente su referencia 'docUrl' en MongoDB.
  */
 @Injectable()
 export class NotesService {
@@ -59,9 +61,82 @@ export class NotesService {
     return null;
   }
 
+  /**
+   * Ruta física del archivo binario .pptx de una presentación.
+   * A diferencia de los documentos JSON, las presentaciones se almacenan
+   * como un archivo PowerPoint real en el disco.
+   */
+  private getPptxFilePath(noteId: string): string {
+    return path.join(this.documentsDir, `${noteId}.pptx`);
+  }
+
+  private getPptxFileUrl(noteId: string): string {
+    return `/uploads/documents/${noteId}.pptx`;
+  }
+
+  /**
+   * Escribe el archivo binario .pptx decodificando el base64 recibido.
+   * Devuelve la URL de referencia almacenada en MongoDB, o cadena vacía si falla.
+   */
+  private writePhysicalPptx(noteId: string, base64: string): string {
+    try {
+      if (!base64) {
+        return '';
+      }
+      const filePath = this.getPptxFilePath(noteId);
+      const buffer = Buffer.from(base64, 'base64');
+      fs.writeFileSync(filePath, buffer);
+      return this.getPptxFileUrl(noteId);
+    } catch (err) {
+      console.error(`[NotesService] Error writing physical PPTX ${noteId}:`, err);
+      return '';
+    }
+  }
+
+  /**
+   * Lee el archivo .pptx físico y lo devuelve codificado en base64 para el cliente.
+   */
+  private readPhysicalPptxBase64(noteId: string): string | null {
+    try {
+      const filePath = this.getPptxFilePath(noteId);
+      if (fs.existsSync(filePath)) {
+        return fs.readFileSync(filePath).toString('base64');
+      }
+    } catch (err) {
+      console.error(`[NotesService] Error reading physical PPTX ${noteId}:`, err);
+    }
+    return null;
+  }
+
+  private deletePhysicalPptx(noteId: string): void {
+    try {
+      const filePath = this.getPptxFilePath(noteId);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    } catch (err) {
+      console.error(`[NotesService] Error deleting physical PPTX ${noteId}:`, err);
+    }
+  }
+
+  /**
+   * Construye el docData de una presentación a partir del archivo físico en disco.
+   */
+  private buildSlideDocData(noteId: string): any {
+    const base64 = this.readPhysicalPptxBase64(noteId);
+    if (base64 === null) {
+      return null;
+    }
+    return { format: 'pptx', base64 };
+  }
+
   private deletePhysicalDoc(noteId: string, docType?: string): void {
     try {
       if (docType) {
+        if (docType === 'slide') {
+          this.deletePhysicalPptx(noteId);
+          // Eliminar también posibles JSON heredados de versiones anteriores
+        }
         const filePath = this.getDocFilePath(noteId, docType);
         if (fs.existsSync(filePath)) {
           fs.unlinkSync(filePath);
@@ -74,6 +149,7 @@ export class NotesService {
             fs.unlinkSync(fp);
           }
         }
+        this.deletePhysicalPptx(noteId);
       }
     } catch (err) {
       console.error(`[NotesService] Error deleting physical document ${noteId}:`, err);
@@ -177,7 +253,12 @@ export class NotesService {
     // Hidratar docData para cada nota especializada para que la carga inicial sea completa e inmediata
     return notes.map((n) => {
       const noteObj: any = n.toObject ? n.toObject() : { ...n };
-      if (noteObj.docType && noteObj.docType !== 'block') {
+      if (noteObj.docType === 'slide') {
+        const slideData = this.buildSlideDocData(noteObj._id.toString());
+        if (slideData !== null) {
+          noteObj.docData = slideData;
+        }
+      } else if (noteObj.docType && noteObj.docType !== 'block') {
         const physicalData = this.readPhysicalDoc(noteObj._id.toString(), noteObj.docType);
         if (physicalData !== null) {
           noteObj.docData = physicalData;
@@ -198,7 +279,12 @@ export class NotesService {
     }
 
     const noteObj: any = note.toObject ? note.toObject() : { ...note };
-    if (noteObj.docType && noteObj.docType !== 'block') {
+    if (noteObj.docType === 'slide') {
+      const slideData = this.buildSlideDocData(id);
+      if (slideData !== null) {
+        noteObj.docData = slideData;
+      }
+    } else if (noteObj.docType && noteObj.docType !== 'block') {
       const physicalData = this.readPhysicalDoc(id, noteObj.docType);
       if (physicalData !== null) {
         noteObj.docData = physicalData;
@@ -223,7 +309,14 @@ export class NotesService {
       initialDocData =
         createNoteDto.docData ??
         this.getDefaultSpecializedData(docType, noteIdStr, createNoteDto.title);
-      docUrl = this.writePhysicalDoc(noteIdStr, docType, initialDocData);
+      if (docType === 'slide') {
+        // Las presentaciones se almacenan como archivo binario .pptx real en disco
+        docUrl = this.writePhysicalPptx(noteIdStr, initialDocData?.base64 ?? '');
+        // Normalizar la respuesta en memoria para el cliente
+        initialDocData = { format: 'pptx', base64: initialDocData?.base64 ?? '' };
+      } else {
+        docUrl = this.writePhysicalDoc(noteIdStr, docType, initialDocData);
+      }
     }
 
     const initialBlocks: Block[] = createNoteDto.blocks?.length
@@ -249,7 +342,7 @@ export class NotesService {
       lead: createNoteDto.lead ?? '',
       space: createNoteDto.space ?? 'Research',
       docType: docType,
-      docUrl: docUrl ?? undefined,
+      docUrl: docUrl || undefined,
       docData: null, // No almacenar el JSON en MongoDB para evitar llenar la base de datos
       tags: createNoteDto.tags ?? [],
       blocks: initialBlocks,
@@ -277,15 +370,30 @@ export class NotesService {
 
     if (effectiveDocType !== 'block') {
       if (updateNoteDto.docData !== undefined && updateNoteDto.docData !== null) {
-        if (updateNoteDto.title && typeof updateNoteDto.docData === 'object') {
-          updateNoteDto.docData.title = updateNoteDto.title;
+        if (effectiveDocType === 'slide') {
+          // Persistir el binario .pptx en disco y guardar solo la referencia en MongoDB
+          const docUrl = this.writePhysicalPptx(id, updateNoteDto.docData?.base64 ?? '');
+          if (docUrl) {
+            updateNoteDto.docUrl = docUrl;
+          }
+          memoryDocData = {
+            format: 'pptx',
+            base64: updateNoteDto.docData?.base64 ?? '',
+            updatedAt: updateNoteDto.docData?.updatedAt,
+          };
+        } else {
+          if (updateNoteDto.title && typeof updateNoteDto.docData === 'object') {
+            updateNoteDto.docData.title = updateNoteDto.title;
+          }
+          const docUrl = this.writePhysicalDoc(id, effectiveDocType, updateNoteDto.docData);
+          if (docUrl) {
+            updateNoteDto.docUrl = docUrl;
+          }
+          memoryDocData = updateNoteDto.docData;
         }
-        const docUrl = this.writePhysicalDoc(id, effectiveDocType, updateNoteDto.docData);
-        updateNoteDto.docUrl = docUrl;
-        memoryDocData = updateNoteDto.docData;
         // Evitar guardar docData pesado en MongoDB
         updateNoteDto.docData = null;
-      } else if (updateNoteDto.title) {
+      } else if (updateNoteDto.title && effectiveDocType !== 'slide') {
         const existingData = this.readPhysicalDoc(id, effectiveDocType);
         if (existingData && typeof existingData === 'object') {
           existingData.title = updateNoteDto.title;
@@ -305,10 +413,13 @@ export class NotesService {
 
     const resultObj: any = updated.toObject ? updated.toObject() : { ...updated };
     if (effectiveDocType !== 'block') {
-      resultObj.docData =
-        memoryDocData !== undefined
-          ? memoryDocData
-          : this.readPhysicalDoc(id, effectiveDocType);
+      if (memoryDocData !== undefined) {
+        resultObj.docData = memoryDocData;
+      } else if (effectiveDocType === 'slide') {
+        resultObj.docData = this.buildSlideDocData(id);
+      } else {
+        resultObj.docData = this.readPhysicalDoc(id, effectiveDocType);
+      }
     }
     return resultObj;
   }
