@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1161.0",
+    "@nestjs/cli": "^12.0.0",
     "@nestjs/common": "^12.0.1",
     "@nestjs/config": "^12.0.1",
     "@nestjs/core": "^12.0.1",
@@ -29,6 +30,7 @@
     "@nestjs/mongoose": "^12.0.0",
     "@nestjs/passport": "^12.0.0",
     "@nestjs/platform-express": "^12.0.1",
+    "@nestjs/schematics": "^12.0.0",
     "@nestjs/serve-static": "^12.0.0",
     "bcryptjs": "^3.0.3",
     "class-transformer": "^0.5.1",
@@ -38,12 +40,12 @@
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^6.0.2"
   },
   "devDependencies": {
-    "@nestjs/cli": "^12.0.0",
     "@nestjs/mau": "^0.2.6",
-    "@nestjs/schematics": "^12.0.0",
     "@nestjs/testing": "^12.0.1",
     "@types/bcryptjs": "^2.4.6",
     "@types/express": "^5.0.0",
@@ -60,8 +62,6 @@
     "supertest": "^7.0.0",
     "ts-jest": "^29.4.0",
     "ts-loader": "^9.5.2",
-    "ts-node": "^10.9.2",
-    "tsconfig-paths": "^4.2.0",
-    "typescript": "^6.0.2"
+    "ts-node": "^10.9.2"
   }
 }
