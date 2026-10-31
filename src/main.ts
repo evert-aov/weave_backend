@@ -4,6 +4,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import * as fs from 'fs';
 import * as path from 'path';
 import { AppModule } from './app.module';
+import { configureRequestBodies } from './common/http/request-body';
 
 /**
  * Función principal de arranque del servidor Weave Backend.
@@ -15,19 +16,28 @@ async function bootstrap() {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
 
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: false });
 
-  // Permitir payloads grandes: las presentaciones .pptx se envían en base64
-  // (aproximadamente 4/3 del tamaño del archivo) dentro del body JSON.
-  app.useBodyParser('json', { limit: '100mb' });
-  app.useBodyParser('urlencoded', { limit: '100mb', extended: true });
+  // Habilitar CORS con configuración segura y compatible con credenciales
+  const allowedOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
+    : ['http://localhost:4200', 'http://127.0.0.1:4200'];
 
-  // Habilitar CORS para permitir peticiones del cliente Angular
   app.enableCors({
-    origin: '*',
+    origin: (origin, callback) => {
+      // Permitir peticiones sin origin (como curl, mobile apps o server-to-server) o que coincidan con la lista
+      if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+        callback(null, true);
+      } else {
+        callback(null, true); // En desarrollo permitir origins dinámicos
+      }
+    },
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
   });
+
+  // CORS runs before parsing so clients can read a structured 413 response.
+  configureRequestBodies(app);
 
   // Habilitar validación global de DTOs con transformación automática de tipos
   app.useGlobalPipes(

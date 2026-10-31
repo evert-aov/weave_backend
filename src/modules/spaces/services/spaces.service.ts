@@ -21,10 +21,6 @@ export class SpacesService {
    * Obtiene todos los espacios del usuario. Si el usuario aún no tiene espacios,
    * crea automáticamente los espacios iniciales en MongoDB.
    */
-  /**
-   * Obtiene todos los espacios del usuario. Si el usuario aún no tiene espacios,
-   * crea automáticamente los espacios iniciales en MongoDB.
-   */
   async getSpaces(userId: string) {
     let spaces = await this.spacesRepository.findAllByUser(userId);
     if (spaces.length === 0) {

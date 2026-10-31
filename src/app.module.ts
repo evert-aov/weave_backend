@@ -7,6 +7,8 @@ import { AuthModule } from './modules/auth/auth.module';
 import { NotesModule } from './modules/notes/notes.module';
 import { AssetsModule } from './modules/assets/assets.module';
 import { SpacesModule } from './modules/spaces/spaces.module';
+import { LatexModule } from './modules/latex/latex.module';
+import { AiModule } from './modules/ai/ai.module';
 
 /**
  * Módulo raíz de la aplicación Weave Backend.
@@ -35,6 +37,8 @@ import { SpacesModule } from './modules/spaces/spaces.module';
     NotesModule,
     AssetsModule,
     SpacesModule,
+    AiModule,
+    LatexModule,
   ],
 })
 export class AppModule {}

@@ -16,7 +16,7 @@ export class CreateBlockDto {
   @IsNotEmpty()
   id: string;
 
-  @IsIn(['text', 'canvas', 'latex', 'image', 'sheet', 'code', 'mermaid'])
+  @IsIn(['text', 'canvas', 'latex', 'image', 'sheet', 'code', 'mermaid', 'file'])
   type: BlockType;
 
   @IsNumber()

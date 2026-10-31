@@ -1,234 +1,43 @@
 import {
   Injectable,
+  BadRequestException,
   NotFoundException,
 } from '@nestjs/common';
 import { Types } from 'mongoose';
-import * as fs from 'fs';
-import * as path from 'path';
 import { NotesRepository } from '../repositories/notes.repository';
+import { DocumentStorageService } from './document-storage.service';
+import { SpecializedDocumentsService } from './specialized-documents.service';
+import { NoteBlocksService } from './note-blocks.service';
 import { CreateNoteDto, UpdateNoteDto } from '../dto/note.dto';
 import { CreateBlockDto, UpdateBlockDto, ReorderBlocksDto } from '../dto/block.dto';
 import { Block } from '../entities/block.entity';
 
 /**
- * Servicio de dominio para Gestión de Notas y Bloques.
- * Implementa las reglas de negocio, ordenación y validaciones.
- * Almacena documentos 'block' (todo en uno) directamente en MongoDB y almacena
- * documentos especializados ('sheet', 'doc', 'canvas') en archivos físicos JSON en el disco,
- * guardando solo el enlace 'docUrl' en MongoDB para no sobrecargar la base de datos.
- * Las presentaciones ('slide') se guardan como archivo binario .pptx real en disco,
- * almacenando únicamente su referencia 'docUrl' en MongoDB.
+ * Servicio de dominio para Gestión de Notas.
+ * Actúa como orquestador de alto nivel aplicando Alta Cohesión:
+ * - Delega la gestión de bloques a NoteBlocksService.
+ * - Delega la persistencia física de documentos especializados a SpecializedDocumentsService.
+ * - Gestiona la identidad, pertenencia a espacios y persistencia en MongoDB.
  */
 @Injectable()
 export class NotesService {
-  private readonly documentsDir = path.resolve(process.cwd(), 'uploads', 'documents');
-
-  constructor(private readonly notesRepository: NotesRepository) {
-    if (!fs.existsSync(this.documentsDir)) {
-      fs.mkdirSync(this.documentsDir, { recursive: true });
-    }
-  }
-
-  private getDocFilePath(noteId: string, docType: string): string {
-    return path.join(this.documentsDir, `${noteId}_${docType}.json`);
-  }
-
-  private getDocFileUrl(noteId: string, docType: string): string {
-    return `/uploads/documents/${noteId}_${docType}.json`;
-  }
-
-  private writePhysicalDoc(noteId: string, docType: string, data: any): string {
-    try {
-      const filePath = this.getDocFilePath(noteId, docType);
-      fs.writeFileSync(filePath, JSON.stringify(data ?? {}, null, 2), 'utf-8');
-      return this.getDocFileUrl(noteId, docType);
-    } catch (err) {
-      console.error(`[NotesService] Error writing physical document ${noteId}:`, err);
-      return '';
-    }
-  }
-
-  private readPhysicalDoc(noteId: string, docType: string): any {
-    try {
-      const filePath = this.getDocFilePath(noteId, docType);
-      if (fs.existsSync(filePath)) {
-        const raw = fs.readFileSync(filePath, 'utf-8');
-        return JSON.parse(raw);
-      }
-    } catch (err) {
-      console.error(`[NotesService] Error reading physical document ${noteId}:`, err);
-    }
-    return null;
-  }
-
-  /**
-   * Ruta física del archivo binario .pptx de una presentación.
-   * A diferencia de los documentos JSON, las presentaciones se almacenan
-   * como un archivo PowerPoint real en el disco.
-   */
-  private getPptxFilePath(noteId: string): string {
-    return path.join(this.documentsDir, `${noteId}.pptx`);
-  }
-
-  private getPptxFileUrl(noteId: string): string {
-    return `/uploads/documents/${noteId}.pptx`;
-  }
-
-  /**
-   * Escribe el archivo binario .pptx decodificando el base64 recibido.
-   * Devuelve la URL de referencia almacenada en MongoDB, o cadena vacía si falla.
-   */
-  private writePhysicalPptx(noteId: string, base64: string): string {
-    try {
-      if (!base64) {
-        return '';
-      }
-      const filePath = this.getPptxFilePath(noteId);
-      const buffer = Buffer.from(base64, 'base64');
-      fs.writeFileSync(filePath, buffer);
-      return this.getPptxFileUrl(noteId);
-    } catch (err) {
-      console.error(`[NotesService] Error writing physical PPTX ${noteId}:`, err);
-      return '';
-    }
-  }
-
-  /**
-   * Lee el archivo .pptx físico y lo devuelve codificado en base64 para el cliente.
-   */
-  private readPhysicalPptxBase64(noteId: string): string | null {
-    try {
-      const filePath = this.getPptxFilePath(noteId);
-      if (fs.existsSync(filePath)) {
-        return fs.readFileSync(filePath).toString('base64');
-      }
-    } catch (err) {
-      console.error(`[NotesService] Error reading physical PPTX ${noteId}:`, err);
-    }
-    return null;
-  }
-
-  private deletePhysicalPptx(noteId: string): void {
-    try {
-      const filePath = this.getPptxFilePath(noteId);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-    } catch (err) {
-      console.error(`[NotesService] Error deleting physical PPTX ${noteId}:`, err);
-    }
-  }
-
-  /**
-   * Construye el docData de una presentación a partir del archivo físico en disco.
-   */
-  private buildSlideDocData(noteId: string): any {
-    const base64 = this.readPhysicalPptxBase64(noteId);
-    if (base64 === null) {
-      return null;
-    }
-    return { format: 'pptx', base64 };
-  }
-
-  private deletePhysicalDoc(noteId: string, docType?: string): void {
-    try {
-      if (docType) {
-        if (docType === 'slide') {
-          this.deletePhysicalPptx(noteId);
-          // Eliminar también posibles JSON heredados de versiones anteriores
-        }
-        const filePath = this.getDocFilePath(noteId, docType);
-        if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
-        }
-      } else {
-        const types = ['sheet', 'doc', 'canvas', 'slide'];
-        for (const t of types) {
-          const fp = this.getDocFilePath(noteId, t);
-          if (fs.existsSync(fp)) {
-            fs.unlinkSync(fp);
-          }
-        }
-        this.deletePhysicalPptx(noteId);
-      }
-    } catch (err) {
-      console.error(`[NotesService] Error deleting physical document ${noteId}:`, err);
-    }
-  }
-
-  private getDefaultSpecializedData(docType: string, noteId: string, title?: string): any {
-    if (docType === 'sheet') {
-      return {
-        id: `wb-${noteId}`,
-        name: title || 'Hoja 1',
-        sheets: {
-          'sheet-01': {
-            id: 'sheet-01',
-            name: 'Hoja 1',
-            rowCount: 50,
-            columnCount: 20,
-            cellData: {},
-          },
-        },
-      };
-    } else if (docType === 'doc') {
-      const t = title || 'Nuevo Documento';
-      return {
-        id: `doc-${noteId}`,
-        title: t,
-        body: {
-          dataStream: '\r\n',
-          textRuns: [],
-          paragraphs: [
-            {
-              startIndex: 0,
-              paragraphId: `p-${noteId}-0`,
-              paragraphStyle: {},
-            },
-          ],
-          sectionBreaks: [
-            {
-              startIndex: 1,
-              sectionId: `s-${noteId}-0`,
-            },
-          ],
-        },
-        documentStyle: {
-          pageSize: {
-            width: 794,
-            height: 1124,
-          },
-          documentFlavor: 1,
-          marginTop: 72,
-          marginBottom: 72,
-          marginRight: 72,
-          marginLeft: 72,
-        },
-      };
-    } else if (docType === 'canvas') {
-      return {
-        elements: [],
-        appState: {
-          viewBackgroundColor: '#ffffff',
-        },
-      };
-    } else if (docType === 'slide') {
-      return {
-        format: 'pptx',
-        base64: '',
-      };
-    }
-    return null;
-  }
+  constructor(
+    private readonly notesRepository: NotesRepository,
+    private readonly storageService: DocumentStorageService,
+    private readonly specializedDocsService: SpecializedDocumentsService,
+    private readonly noteBlocksService: NoteBlocksService,
+  ) {}
 
   /**
    * Obtiene la lista de notas de un usuario filtradas opcionalmente por espacio.
+   * La vista resumida omite contenidos y lecturas de disco para la navegación inicial.
    */
-  async getNotes(userId: string, space?: string) {
-    let notes = await this.notesRepository.findAllByUser(userId, space);
+  async getNotes(userId: string, space?: string, summaryOnly = false) {
+    let notes = summaryOnly
+      ? await this.notesRepository.findAllByUser(userId, space, true)
+      : await this.notesRepository.findAllByUser(userId, space);
     if (notes.length === 0 && (!space || space === 'all' || space === 'Research')) {
-      const allUserNotes = await this.notesRepository.findAllByUser(userId);
-      if (allUserNotes.length === 0) {
+      if (!(await this.notesRepository.hasNotes(userId))) {
         const welcomeNote = await this.notesRepository.create({
           userId: Types.ObjectId.isValid(userId) ? new Types.ObjectId(userId) : (userId as any),
           title: 'Bienvenido a Weave',
@@ -250,27 +59,26 @@ export class NotesService {
         notes = [welcomeNote];
       }
     }
-    // Hidratar docData para cada nota especializada para que la carga inicial sea completa e inmediata
-    return notes.map((n) => {
-      const noteObj: any = n.toObject ? n.toObject() : { ...n };
-      if (noteObj.docType === 'slide') {
-        const slideData = this.buildSlideDocData(noteObj._id.toString());
-        if (slideData !== null) {
-          noteObj.docData = slideData;
-        }
-      } else if (noteObj.docType && noteObj.docType !== 'block') {
-        const physicalData = this.readPhysicalDoc(noteObj._id.toString(), noteObj.docType);
-        if (physicalData !== null) {
-          noteObj.docData = physicalData;
-        }
-      }
-      return noteObj;
-    });
+
+    if (summaryOnly) {
+      return notes.map(note => {
+        const value = note.toObject ? note.toObject() : note;
+        const { blocks, docData, ...summary } = value;
+        return summary;
+      });
+    }
+
+    return Promise.all(
+      notes.map(async (n) => {
+        const noteObj: any = (n as any).toObject ? (n as any).toObject() : JSON.parse(JSON.stringify(n));
+        return this.specializedDocsService.hydrateDocument(noteObj);
+      }),
+    );
   }
 
   /**
    * Obtiene un documento de nota por su identificador.
-   * Si es un documento especializado, hidrata dinámicamente 'docData' desde el archivo físico.
+   * Hidrata asíncronamente 'docData' a través del servicio especializado.
    */
   async getNoteById(id: string, userId: string) {
     const note = await this.notesRepository.findByIdAndUser(id, userId);
@@ -278,24 +86,13 @@ export class NotesService {
       throw new NotFoundException('Note not found');
     }
 
-    const noteObj: any = note.toObject ? note.toObject() : { ...note };
-    if (noteObj.docType === 'slide') {
-      const slideData = this.buildSlideDocData(id);
-      if (slideData !== null) {
-        noteObj.docData = slideData;
-      }
-    } else if (noteObj.docType && noteObj.docType !== 'block') {
-      const physicalData = this.readPhysicalDoc(id, noteObj.docType);
-      if (physicalData !== null) {
-        noteObj.docData = physicalData;
-      }
-    }
-    return noteObj;
+    const noteObj: any = (note as any).toObject ? (note as any).toObject() : JSON.parse(JSON.stringify(note));
+    return this.specializedDocsService.hydrateDocument(noteObj);
   }
 
   /**
-   * Crea una nueva nota. Si es especializada ('sheet', 'doc', 'canvas'), guarda su contenido
-   * en un archivo físico en el disco y almacena en MongoDB únicamente la referencia 'docUrl'.
+   * Crea una nueva nota. Si es especializada ('sheet', 'doc', 'canvas', 'slide'),
+   * delega la escritura física en disco al servicio especializado.
    */
   async createNote(userId: string, createNoteDto: CreateNoteDto) {
     const docType = createNoteDto.docType || 'block';
@@ -305,18 +102,15 @@ export class NotesService {
     let docUrl: string | null = null;
     let initialDocData: any = null;
 
-    if (docType !== 'block') {
-      initialDocData =
-        createNoteDto.docData ??
-        this.getDefaultSpecializedData(docType, noteIdStr, createNoteDto.title);
-      if (docType === 'slide') {
-        // Las presentaciones se almacenan como archivo binario .pptx real en disco
-        docUrl = this.writePhysicalPptx(noteIdStr, initialDocData?.base64 ?? '');
-        // Normalizar la respuesta en memoria para el cliente
-        initialDocData = { format: 'pptx', base64: initialDocData?.base64 ?? '' };
-      } else {
-        docUrl = this.writePhysicalDoc(noteIdStr, docType, initialDocData);
-      }
+    if (docType !== 'block' && docType !== 'latex') {
+      const result = await this.specializedDocsService.createSpecializedDocument(
+        noteIdStr,
+        docType,
+        createNoteDto.title,
+        createNoteDto.docData,
+      );
+      docUrl = result.docUrl;
+      initialDocData = result.initialDocData;
     }
 
     const initialBlocks: Block[] = createNoteDto.blocks?.length
@@ -343,13 +137,13 @@ export class NotesService {
       space: createNoteDto.space ?? 'Research',
       docType: docType,
       docUrl: docUrl || undefined,
-      docData: null, // No almacenar el JSON en MongoDB para evitar llenar la base de datos
+      docData: docType === 'latex' ? this.latexData(createNoteDto.docData) : null,
       tags: createNoteDto.tags ?? [],
       blocks: initialBlocks,
     });
 
-    const createdObj: any = created.toObject ? created.toObject() : { ...created };
-    if (docType !== 'block') {
+    const createdObj: any = (created as any).toObject ? (created as any).toObject() : JSON.parse(JSON.stringify(created));
+    if (docType !== 'block' && docType !== 'latex') {
       createdObj.docData = initialDocData;
     }
     return createdObj;
@@ -357,7 +151,7 @@ export class NotesService {
 
   /**
    * Actualiza el contenido y metadatos de un documento.
-   * Si es especializado, persiste los datos en archivo físico y actualiza 'docUrl'.
+   * Persiste de forma asíncrona datos especializados a través de SpecializedDocumentsService.
    */
   async updateNote(id: string, userId: string, updateNoteDto: UpdateNoteDto) {
     const note = await this.notesRepository.findByIdAndUser(id, userId);
@@ -367,37 +161,28 @@ export class NotesService {
 
     const effectiveDocType = updateNoteDto.docType || note.docType || 'block';
     let memoryDocData: any = undefined;
+    if (effectiveDocType === 'latex' && updateNoteDto.docData !== undefined) {
+      updateNoteDto.docData = this.latexData(updateNoteDto.docData);
+    }
 
-    if (effectiveDocType !== 'block') {
+    if (effectiveDocType !== 'block' && effectiveDocType !== 'latex') {
       if (updateNoteDto.docData !== undefined && updateNoteDto.docData !== null) {
-        if (effectiveDocType === 'slide') {
-          // Persistir el binario .pptx en disco y guardar solo la referencia en MongoDB
-          const docUrl = this.writePhysicalPptx(id, updateNoteDto.docData?.base64 ?? '');
-          if (docUrl) {
-            updateNoteDto.docUrl = docUrl;
-          }
-          memoryDocData = {
-            format: 'pptx',
-            base64: updateNoteDto.docData?.base64 ?? '',
-            updatedAt: updateNoteDto.docData?.updatedAt,
-          };
-        } else {
-          if (updateNoteDto.title && typeof updateNoteDto.docData === 'object') {
-            updateNoteDto.docData.title = updateNoteDto.title;
-          }
-          const docUrl = this.writePhysicalDoc(id, effectiveDocType, updateNoteDto.docData);
-          if (docUrl) {
-            updateNoteDto.docUrl = docUrl;
-          }
-          memoryDocData = updateNoteDto.docData;
+        const result = await this.specializedDocsService.updateSpecializedDocument(
+          id,
+          effectiveDocType,
+          updateNoteDto.docData,
+          updateNoteDto.title,
+        );
+        if (result.docUrl) {
+          updateNoteDto.docUrl = result.docUrl;
         }
-        // Evitar guardar docData pesado en MongoDB
+        memoryDocData = result.memoryDocData;
         updateNoteDto.docData = null;
       } else if (updateNoteDto.title && effectiveDocType !== 'slide') {
-        const existingData = this.readPhysicalDoc(id, effectiveDocType);
+        const existingData = await this.specializedDocsService.readSpecializedDocument(id, effectiveDocType);
         if (existingData && typeof existingData === 'object') {
           existingData.title = updateNoteDto.title;
-          this.writePhysicalDoc(id, effectiveDocType, existingData);
+          await this.specializedDocsService.updateSpecializedDocument(id, effectiveDocType, existingData);
         }
       }
     }
@@ -411,21 +196,19 @@ export class NotesService {
       throw new NotFoundException('Note update failed');
     }
 
-    const resultObj: any = updated.toObject ? updated.toObject() : { ...updated };
-    if (effectiveDocType !== 'block') {
+    const resultObj: any = (updated as any).toObject ? (updated as any).toObject() : JSON.parse(JSON.stringify(updated));
+    if (effectiveDocType !== 'block' && effectiveDocType !== 'latex') {
       if (memoryDocData !== undefined) {
         resultObj.docData = memoryDocData;
-      } else if (effectiveDocType === 'slide') {
-        resultObj.docData = this.buildSlideDocData(id);
       } else {
-        resultObj.docData = this.readPhysicalDoc(id, effectiveDocType);
+        resultObj.docData = await this.specializedDocsService.readSpecializedDocument(id, effectiveDocType);
       }
     }
     return resultObj;
   }
 
   /**
-   * Elimina un documento de nota y borra su archivo físico correspondiente del disco.
+   * Elimina un documento de nota y borra sus archivos asociados de forma asíncrona.
    */
   async deleteNote(id: string, userId: string) {
     const note = await this.notesRepository.findByIdAndUser(id, userId);
@@ -433,8 +216,8 @@ export class NotesService {
       throw new NotFoundException('Note not found');
     }
 
-    if (note.docType && note.docType !== 'block') {
-      this.deletePhysicalDoc(id, note.docType);
+    if (note.docType && note.docType !== 'block' && note.docType !== 'latex') {
+      await this.specializedDocsService.deleteSpecializedDocument(id, note.docType);
     }
 
     const deleted = await this.notesRepository.delete(id, userId);
@@ -444,116 +227,39 @@ export class NotesService {
     return { success: true, message: 'Note deleted successfully' };
   }
 
-  /**
-   * Añade un nuevo bloque al documento en una posición específica.
-   */
-  async addBlock(noteId: string, userId: string, createBlockDto: CreateBlockDto) {
-    const note = await this.getNoteById(noteId, userId);
-    const newOrder =
-      createBlockDto.order !== undefined
-        ? createBlockDto.order
-        : note.blocks.length;
-
-    const newBlock: Block = {
-      id: createBlockDto.id,
-      type: createBlockDto.type,
-      order: newOrder,
-      content: createBlockDto.content ?? {},
-      metadata: createBlockDto.metadata ?? {},
-    };
-
-    const updatedBlocks = [...note.blocks];
-    updatedBlocks.splice(newOrder, 0, newBlock);
-
-    // Normalizar orden secuencial de los bloques
-    updatedBlocks.forEach((block, index) => {
-      block.order = index;
-    });
-
-    return this.notesRepository.update(noteId, userId, { blocks: updatedBlocks });
+  private latexData(data: unknown): { version: number; source: string } {
+    if (data == null) return { version: 1, source: '' };
+    const source = (data as { source?: unknown }).source;
+    if (typeof source !== 'string' || source.length > 300_000) {
+      throw new BadRequestException('El documento LaTeX debe contener source (máximo 300 000 caracteres).');
+    }
+    return { version: 1, source };
   }
 
-  /**
-   * Actualiza los datos o el contenido de un bloque existente.
-   */
+  // --- Métodos de delegación de Bloques (NoteBlocksService) para compatibilidad hacia atrás ---
+
+  async addBlock(noteId: string, userId: string, createBlockDto: CreateBlockDto) {
+    return this.noteBlocksService.addBlock(noteId, userId, createBlockDto);
+  }
+
   async updateBlock(
     noteId: string,
     blockId: string,
     userId: string,
     updateBlockDto: UpdateBlockDto,
   ) {
-    const note = await this.getNoteById(noteId, userId);
-    const blocks: Block[] = (note.blocks || []) as Block[];
-    const blockIndex = blocks.findIndex((b: Block) => b.id === blockId);
-
-    if (blockIndex === -1) {
-      throw new NotFoundException('Block not found');
-    }
-
-    const currentBlock = blocks[blockIndex];
-    const updatedBlock: Block = {
-      ...currentBlock,
-      ...updateBlockDto,
-      content: updateBlockDto.content
-        ? { ...currentBlock.content, ...updateBlockDto.content }
-        : currentBlock.content,
-      metadata: updateBlockDto.metadata
-        ? { ...currentBlock.metadata, ...updateBlockDto.metadata }
-        : currentBlock.metadata,
-    };
-
-    const updatedBlocks = [...blocks];
-    updatedBlocks[blockIndex] = updatedBlock;
-
-    return this.notesRepository.update(noteId, userId, { blocks: updatedBlocks });
+    return this.noteBlocksService.updateBlock(noteId, blockId, userId, updateBlockDto);
   }
 
-  /**
-   * Elimina un bloque específico del documento.
-   */
   async removeBlock(noteId: string, blockId: string, userId: string) {
-    const note = await this.getNoteById(noteId, userId);
-    const blocks: Block[] = (note.blocks || []) as Block[];
-    const updatedBlocks = blocks.filter((b: Block) => b.id !== blockId);
-
-    // Reordenar índices secuenciales
-    updatedBlocks.forEach((block: Block, index: number) => {
-      block.order = index;
-    });
-
-    return this.notesRepository.update(noteId, userId, { blocks: updatedBlocks });
+    return this.noteBlocksService.removeBlock(noteId, blockId, userId);
   }
 
-  /**
-   * Reordena los bloques según una lista ordenada de IDs.
-   */
   async reorderBlocks(
     noteId: string,
     userId: string,
     reorderDto: ReorderBlocksDto,
   ) {
-    const note = await this.getNoteById(noteId, userId);
-    const blocks: Block[] = (note.blocks || []) as Block[];
-    const blockMap = new Map<string, Block>(blocks.map((b: Block) => [b.id, b]));
-
-    const reorderedBlocks: Block[] = [];
-    reorderDto.blockIds.forEach((id: string, index: number) => {
-      const block = blockMap.get(id);
-      if (block) {
-        block.order = index;
-        reorderedBlocks.push(block);
-        blockMap.delete(id);
-      }
-    });
-
-    // Añadir cualquier bloque remanente al final
-    blockMap.forEach((block: Block) => {
-      block.order = reorderedBlocks.length;
-      reorderedBlocks.push(block);
-    });
-
-    return this.notesRepository.update(noteId, userId, {
-      blocks: reorderedBlocks,
-    });
+    return this.noteBlocksService.reorderBlocks(noteId, userId, reorderDto);
   }
 }

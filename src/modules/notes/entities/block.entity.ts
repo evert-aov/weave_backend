@@ -10,7 +10,8 @@ export type BlockType =
   | 'image'
   | 'sheet'
   | 'code'
-  | 'mermaid';
+  | 'mermaid'
+  | 'file';
 
 /**
  * Entidad embebida que representa un bloque dentro de un documento.
@@ -22,7 +23,7 @@ export class Block {
 
   @Prop({
     required: true,
-    enum: ['text', 'canvas', 'latex', 'image', 'sheet', 'code', 'mermaid'],
+    enum: ['text', 'canvas', 'latex', 'image', 'sheet', 'code', 'mermaid', 'file'],
   })
   type: BlockType;
 

@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { NotesService } from '../services/notes.service';
+import { NoteBlocksService } from '../services/note-blocks.service';
 import { CreateNoteDto, UpdateNoteDto } from '../dto/note.dto';
 import { CreateBlockDto, UpdateBlockDto, ReorderBlocksDto } from '../dto/block.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
@@ -18,12 +19,16 @@ import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 
 /**
  * Controlador de Notas.
- * Expone endpoints REST protegidos para el ciclo de vida completo de documentos y bloques.
+ * Expone endpoints REST protegidos para el ciclo de vida de los documentos.
+ * Los endpoints de bloques son delegados a NoteBlocksService para asegurar compatibilidad.
  */
 @UseGuards(JwtAuthGuard)
 @Controller('api/notes')
 export class NotesController {
-  constructor(private readonly notesService: NotesService) {}
+  constructor(
+    private readonly notesService: NotesService,
+    private readonly noteBlocksService: NoteBlocksService,
+  ) {}
 
   /**
    * Obtiene la lista de notas del usuario actual, opcionalmente filtradas por espacio.
@@ -32,8 +37,9 @@ export class NotesController {
   async getNotes(
     @CurrentUser('id') userId: string,
     @Query('space') space?: string,
+    @Query('view') view?: string,
   ) {
-    return this.notesService.getNotes(userId, space);
+    return this.notesService.getNotes(userId, space, view === 'summary');
   }
 
   /**
@@ -48,7 +54,7 @@ export class NotesController {
   }
 
   /**
-   * Obtiene un documento específico con todos sus bloques.
+   * Obtiene un documento específico con todos sus bloques e hidratación especializada.
    */
   @Get(':id')
   async getNoteById(
@@ -82,7 +88,7 @@ export class NotesController {
   }
 
   /**
-   * Agrega un nuevo bloque a una nota.
+   * Agrega un nuevo bloque a una nota (compatibilidad hacia atrás).
    */
   @Post(':id/blocks')
   async addBlock(
@@ -90,11 +96,11 @@ export class NotesController {
     @Param('id') id: string,
     @Body() createBlockDto: CreateBlockDto,
   ) {
-    return this.notesService.addBlock(id, userId, createBlockDto);
+    return this.noteBlocksService.addBlock(id, userId, createBlockDto);
   }
 
   /**
-   * Actualiza un bloque existente dentro de una nota.
+   * Actualiza un bloque existente dentro de una nota (compatibilidad hacia atrás).
    */
   @Patch(':id/blocks/:blockId')
   async updateBlock(
@@ -103,11 +109,11 @@ export class NotesController {
     @Param('blockId') blockId: string,
     @Body() updateBlockDto: UpdateBlockDto,
   ) {
-    return this.notesService.updateBlock(id, blockId, userId, updateBlockDto);
+    return this.noteBlocksService.updateBlock(id, blockId, userId, updateBlockDto);
   }
 
   /**
-   * Elimina un bloque dentro de una nota.
+   * Elimina un bloque dentro de una nota (compatibilidad hacia atrás).
    */
   @Delete(':id/blocks/:blockId')
   async removeBlock(
@@ -115,11 +121,11 @@ export class NotesController {
     @Param('id') id: string,
     @Param('blockId') blockId: string,
   ) {
-    return this.notesService.removeBlock(id, blockId, userId);
+    return this.noteBlocksService.removeBlock(id, blockId, userId);
   }
 
   /**
-   * Reordena los bloques de una nota.
+   * Reordena los bloques de una nota (compatibilidad hacia atrás).
    */
   @Put(':id/blocks/reorder')
   async reorderBlocks(
@@ -127,6 +133,6 @@ export class NotesController {
     @Param('id') id: string,
     @Body() reorderDto: ReorderBlocksDto,
   ) {
-    return this.notesService.reorderBlocks(id, userId, reorderDto);
+    return this.noteBlocksService.reorderBlocks(id, userId, reorderDto);
   }
 }

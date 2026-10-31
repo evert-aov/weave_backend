@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Post,
   Req,
@@ -16,7 +17,7 @@ import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 
 /**
  * Controlador de Activos.
- * Endpoint para subir imágenes y archivos desde el bloque de imagen de Weave.
+ * Endpoint para subir imágenes y archivos desde el editor Word y bloques de Weave.
  */
 @UseGuards(JwtAuthGuard)
 @Controller('api/assets')
@@ -24,7 +25,7 @@ export class AssetsController {
   constructor(private readonly assetsService: AssetsService) {}
 
   /**
-   * Sube una imagen (PNG, JPG, WEBP, GIF, SVG) y devuelve la URL accesible.
+   * Sube una imagen o archivo vía multipart/form-data y devuelve su URL física accesible.
    */
   @Post('upload')
   @UseInterceptors(
@@ -73,5 +74,24 @@ export class AssetsController {
     const host = req.get('host');
     const baseUrl = `${protocol}://${host}`;
     return this.assetsService.processUploadedFile(file, baseUrl);
+  }
+
+  /**
+   * Sube una imagen codificada en base64 (Data URL) persistiendo su archivo físico en disco.
+   * Utilizado por el editor de Word para persistir imágenes incrustadas, arrastradas o pegadas.
+   */
+  @Post('upload-base64')
+  async uploadBase64(
+    @Body('dataUrl') dataUrl: string,
+    @Body('filename') filename: string,
+    @Req() req: Request,
+  ) {
+    if (!dataUrl) {
+      throw new BadRequestException('No se proporcionó dataUrl de imagen');
+    }
+    const protocol = req.protocol;
+    const host = req.get('host');
+    const baseUrl = `${protocol}://${host}`;
+    return this.assetsService.uploadBase64Image(dataUrl, filename, baseUrl);
   }
 }

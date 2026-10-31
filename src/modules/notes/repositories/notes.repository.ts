@@ -18,7 +18,7 @@ export class NotesRepository {
   /**
    * Obtiene todas las notas asociadas a un usuario, ordenadas por última actualización.
    */
-  async findAllByUser(userId: string, space?: string): Promise<NoteDocument[]> {
+  async findAllByUser(userId: string, space?: string, summaryOnly = false): Promise<NoteDocument[]> {
     const filter: Record<string, any> = {
       userId: new Types.ObjectId(userId) as any,
     };
@@ -29,7 +29,16 @@ export class NotesRepository {
         { space: new RegExp(`^${escaped}(/.*)?$`, 'i') },
       ];
     }
-    return this.noteModel.find(filter).sort({ updatedAt: -1 }).exec();
+    const query = this.noteModel.find(filter).sort({ updatedAt: -1 });
+    if (summaryOnly) {
+      query.select('_id userId title lead space docType docUrl tags createdAt updatedAt');
+    }
+    return query.exec();
+  }
+
+  /** Comprueba si existe alguna nota sin transferir sus bloques o datos especializados. */
+  async hasNotes(userId: string): Promise<boolean> {
+    return !!(await this.noteModel.exists({ userId: new Types.ObjectId(userId) }).exec());
   }
 
   /**
