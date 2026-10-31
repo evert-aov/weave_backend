@@ -50,13 +50,24 @@ propiedad mediante el repositorio. El PUT recibe `docData`; la respuesta contien
 tipo, URL y datos especializados. Las actualizaciones habituales del frontend también pueden
 usar `PUT /api/notes/:id`.
 
-## Operación
+## Operación y Almacenamiento en la Nube (Cloudflare R2)
 
-Respaldar MongoDB y `uploads/` juntos. La base sin archivos no basta para recuperar documentos
-especializados. En contenedores, montar un volumen persistente y no iniciar varias réplicas
-con discos locales independientes si deben compartir las mismas notas.
+Para entornos sin estado o en la nube (como Koyeb, Render o Docker efímero), el backend soporta persistencia directa en **Cloudflare R2** mediante el cliente compatible con S3 (`@aws-sdk/client-s3`).
 
-El almacenamiento actual registra fallos y puede devolver `''` o `null`; no hay una transacción
-única que abarque MongoDB y disco. Ante errores de guardado, comprobar permisos, espacio y logs,
-además de la respuesta de la API. No interpretar una URL o registro Mongo como prueba de que
-el archivo se escribió correctamente en todos los casos.
+### Variables de entorno
+```env
+R2_ACCOUNT_ID="<account_id>"
+R2_ACCESS_KEY_ID="<access_key>"
+R2_SECRET_ACCESS_KEY="<secret_key>"
+R2_BUCKET_NAME="<bucket_name>"
+R2_ENDPOINT="https://<account_id>.r2.cloudflarestorage.com"
+R2_PUBLIC_URL="https://<public_subdomain>.r2.dev"
+```
+
+Cuando estas variables están presentes:
+1. `DocumentStorageService` escribe y lee directamente de Cloudflare R2 con fallback a disco/caché local.
+2. `AssetsService` sube imágenes y archivos adjuntos a R2 con su tipo MIME correspondiente.
+3. `UploadsFallbackController` redirige automáticamente (HTTP 302) peticiones de `/uploads/*` ausentes en disco local hacia la URL pública de R2.
+4. El script `scripts/migrate-uploads-to-r2.mjs` permite sincronizar o migrar todo el directorio local `uploads/` al bucket de R2.
+
+Respaldar MongoDB y `uploads/` (o el bucket de R2) juntos. La base sin archivos no basta para recuperar documentos especializados.
