@@ -1,3 +1,5 @@
+import { encodeSheetDocument, decodeSheetDocument } from './sheet-storage-codec';
+import { writeDocumentAtomically } from './atomic-document-file';
 import { Injectable, Logger } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -32,6 +34,7 @@ export class DocumentStorageService implements IDocumentStorageService {
   private readonly logger = new Logger(DocumentStorageService.name);
   private readonly documentsDir = path.resolve(process.cwd(), 'uploads', 'documents');
   private readonly s3Client: S3Client | null = null;
+  private readonly pendingWrites = new Map<string, Promise<string>>();
   private readonly bucketName = process.env.R2_BUCKET_NAME || '';
 
   constructor() {
@@ -86,39 +89,40 @@ export class DocumentStorageService implements IDocumentStorageService {
    * Persiste en Cloudflare R2 y mantiene copia en disco local si está disponible.
    */
   async saveDocument(noteId: string, docType: string, data: any): Promise<string> {
-    const jsonContent = JSON.stringify(data ?? {}, null, 2);
+    // Snapshot before awaiting another save: callers may keep editing the same object.
+    const snapshot = JSON.stringify(data ?? {});
+    const key = `${noteId}:${docType}`;
+    const previous = this.pendingWrites.get(key) || Promise.resolve('');
+    const operation = previous.catch(() => '').then(() => this.persistDocument(noteId, docType, snapshot));
+    this.pendingWrites.set(key, operation);
+    try { return await operation; }
+    finally { if (this.pendingWrites.get(key) === operation) this.pendingWrites.delete(key); }
+  }
+
+  private async persistDocument(noteId: string, docType: string, snapshot: string): Promise<string> {
+    const jsonContent = docType === 'sheet'
+      ? await encodeSheetDocument(JSON.parse(snapshot))
+      : Buffer.from(JSON.stringify(JSON.parse(snapshot), null, 2));
     const relativeUrl = this.getDocFileUrl(noteId, docType);
     let r2Saved = false;
-
-    // 1. Persistir en Cloudflare R2 si está configurado
     if (this.s3Client && this.bucketName) {
       try {
-        const key = `uploads/documents/${noteId}_${docType}.json`;
-        await this.s3Client.send(
-          new PutObjectCommand({
-            Bucket: this.bucketName,
-            Key: key,
-            Body: jsonContent,
-            ContentType: 'application/json',
-          }),
-        );
+        await this.s3Client.send(new PutObjectCommand({
+          Bucket: this.bucketName,
+          Key: `uploads/documents/${noteId}_${docType}.json`,
+          Body: jsonContent,
+          ContentType: 'application/json',
+        }));
         r2Saved = true;
-      } catch (err) {
-        this.logger.error(`Error saving document to R2 ${noteId} (${docType}):`, err);
-      }
+      } catch (err) { this.logger.error(`Error saving document to R2 ${noteId} (${docType}):`, err); }
     }
-
-    // 2. Persistir en disco local (o caché)
-    try {
-      const filePath = this.getDocFilePath(noteId, docType);
-      await fs.promises.writeFile(filePath, jsonContent, 'utf-8');
-    } catch (err) {
+    try { await writeDocumentAtomically(this.getDocFilePath(noteId, docType), jsonContent); }
+    catch (err) {
       if (!r2Saved) {
         this.logger.error(`Error saving physical document ${noteId} (${docType}):`, err);
-        return '';
+        throw err;
       }
     }
-
     return relativeUrl;
   }
 
@@ -128,46 +132,31 @@ export class DocumentStorageService implements IDocumentStorageService {
    */
   async readDocument(noteId: string, docType: string): Promise<any> {
     const filePath = this.getDocFilePath(noteId, docType);
-
-    // 1. Intentar leer de disco local
-    try {
-      const exists = await fs.promises
-        .access(filePath, fs.constants.F_OK)
-        .then(() => true)
-        .catch(() => false);
-
-      if (exists) {
-        const raw = await fs.promises.readFile(filePath, 'utf-8');
-        return JSON.parse(raw);
+    const decode = (raw: string) => docType === 'sheet' ? decodeSheetDocument(raw) : Promise.resolve(JSON.parse(raw));
+    let failure: unknown;
+    try { return await decode(await fs.promises.readFile(filePath, 'utf8')); }
+    catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        failure = err;
+        this.logger.warn(`No se pudo leer localmente ${noteId} (${docType}), consultando R2...`);
       }
-    } catch (err) {
-      this.logger.warn(`No se pudo leer localmente ${noteId} (${docType}), consultando R2...`);
     }
-
-    // 2. Si no se encuentra localmente, recuperar de Cloudflare R2
     if (this.s3Client && this.bucketName) {
       try {
-        const key = `uploads/documents/${noteId}_${docType}.json`;
-        const response = await this.s3Client.send(
-          new GetObjectCommand({
-            Bucket: this.bucketName,
-            Key: key,
-          }),
-        );
+        const response = await this.s3Client.send(new GetObjectCommand({ Bucket: this.bucketName, Key: `uploads/documents/${noteId}_${docType}.json` }));
         if (response.Body) {
-          const str = await response.Body.transformToString('utf-8');
-          const parsed = JSON.parse(str);
-          // Escribir en caché local si es posible
-          try {
-            await fs.promises.writeFile(filePath, str, 'utf-8');
-          } catch {}
+          const raw = await response.Body.transformToString('utf-8');
+          const parsed = await decode(raw);
+          try { await writeDocumentAtomically(filePath, raw); } catch { /* The verified R2 copy is still readable. */ }
           return parsed;
         }
       } catch (err) {
-        this.logger.error(`Error reading document from R2 ${noteId} (${docType}):`, err);
+        const missing = (err as { name?: string; $metadata?: { httpStatusCode?: number } }).name === 'NoSuchKey' || (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 404;
+        if (!missing) { failure = err; this.logger.error(`Error reading document from R2 ${noteId} (${docType}):`, err); }
       }
     }
-
+    // A damaged workbook must not look like a missing one and be overwritten by an empty default.
+    if (failure) throw new Error(`No se pudo leer el documento ${noteId} (${docType}).`, { cause: failure });
     return null;
   }
 
