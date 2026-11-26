@@ -3,7 +3,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { json } from 'express';
 import type { ErrorRequestHandler } from 'express';
 
-export const AI_BODY_LIMIT = 1024 * 1024;
+export const AI_BODY_LIMIT = 64 * 1024 * 1024;
 const logger = new Logger('RequestBody');
 
 /** Distinguish HTTP transport limits from provider context limits without logging user content. */
@@ -16,7 +16,7 @@ export const payloadTooLargeHandler: ErrorRequestHandler = (error, request, resp
     statusCode: 413,
     code: 'PAYLOAD_TOO_LARGE',
     message: aiRequest
-      ? 'La solicitud de IA supera 1 MB. Reduce el texto o desactiva el contexto del documento e inténtalo de nuevo.'
+      ? 'La solicitud de IA supera 64 MiB. Reduce el tamaño de los adjuntos o divide la consulta e inténtalo de nuevo.'
       : 'La solicitud supera el tamaño máximo permitido. Reduce el tamaño del documento o archivo.',
   });
 };

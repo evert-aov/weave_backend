@@ -70,6 +70,21 @@ Texto Unicode: á, é, í, ó, ú, ñ. Referencia: \ref{intro}.
   expect(Buffer.from(result.pdf!, 'base64').subarray(0,5).toString()).toBe('%PDF-');
 }, 30000);
 
+integration('compiles babelfont Noto Sans with Spanish Babel bidi=basic using LuaLaTeX', async () => {
+  const source = String.raw`\documentclass[11pt]{article}
+\usepackage[margin=2cm]{geometry}
+\usepackage[spanish,bidi=basic,provide=*]{babel}
+\babelprovide[onchar=ids fonts]{spanish}
+\babelfont{rm}{Noto Sans}
+\begin{document}
+Texto con Noto Sans: á, é, í, ó, ú, ñ.
+\end{document}`;
+  const result = await new LatexRunner(new ConfigService()).run(prepareLatex(source));
+  expect({success:result.success, log:result.success ? '' : result.log}).toEqual({success:true,log:''});
+  expect(result.log).toContain('Motor: lualatex');
+  expect(Buffer.from(result.pdf!, 'base64').subarray(0,5).toString()).toBe('%PDF-');
+}, 30000);
+
 integration('compiles CircuiTikZ with siunitx both in full documents (including Spanish Babel) and block fragments', async () => {
   const runner = new LatexRunner(new ConfigService());
   const fullDocument = String.raw`\documentclass{article}

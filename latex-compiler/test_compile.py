@@ -22,6 +22,7 @@ class EngineSelectionTests(unittest.TestCase):
             r"\usepackage{unicode-math}",
             r"\setmainfont{TeX Gyre Termes}",
             r"\newfontfamily\headingfont{Liberation Sans}",
+            r"\babelfont{rm}{Noto Sans}",
         ):
             with self.subTest(source=source):
                 self.assertEqual(compiler.select_engine(source), "xelatex")
@@ -183,6 +184,20 @@ rror: The bidi method 'basic' is available only in
             result = compiler.compile_source(source)
         self.assertFalse(result["success"])
         self.assertEqual(run.call_count, 1)
+        self.assertIn("docker build -t weave-latex:1 ./latex-compiler", result["log"])
+        self.assertIn(error, result["log"])
+
+    def test_missing_fontspec_font_reports_rebuild_hint(self):
+        source = b"\\documentclass{article}\n\\usepackage{babel}\n\\babelfont{rm}{Noto Sans}\n\\begin{document}x\\end{document}"
+        error = './main.tex:6: Package fontspec Error: The font "NotoSans" cannot be found.'
+        def run(args, **kwargs):
+            kwargs["stdout"].write(error.encode())
+            return subprocess.CompletedProcess(args, 1)
+        with patch.object(compiler.subprocess, "run", side_effect=run) as run:
+            result = compiler.compile_source(source)
+        self.assertFalse(result["success"])
+        self.assertEqual(run.call_count, 1)
+        self.assertIn("La fuente solicitada no está instalada", result["log"])
         self.assertIn("docker build -t weave-latex:1 ./latex-compiler", result["log"])
         self.assertIn(error, result["log"])
 

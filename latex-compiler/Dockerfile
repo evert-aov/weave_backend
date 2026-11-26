@@ -4,6 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     texlive-pictures texlive-science \
     texlive-lang-spanish texlive-fonts-recommended texlive-xetex texlive-luatex \
     fontconfig lmodern fonts-dejavu-core fonts-liberation2 fonts-texgyre fonts-texgyre-math \
+    fonts-noto-core fonts-noto-mono \
     && fc-cache -f && rm -rf /var/lib/apt/lists/*
 # Warm the Lua font index and common fonts once, not on every isolated request.
 COPY lua-warmup.tex /opt/lua-warmup.tex

@@ -21,7 +21,7 @@ async function bootstrap() {
   // Habilitar CORS con configuración segura y compatible con credenciales
   const allowedOrigins = process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
-    : ['http://localhost:4200', 'http://127.0.0.1:4200'];
+    : ['http://localhost:5000', 'http://127.0.0.1:5000'];
 
   app.enableCors({
     origin: (origin, callback) => {
@@ -48,7 +48,7 @@ async function bootstrap() {
     }),
   );
 
-  const port = process.env.PORT || 3000;
+  const port = process.env.PORT || 5001;
   await app.listen(port);
   console.log(`🚀 Weave Backend running at http://localhost:${port}`);
 }

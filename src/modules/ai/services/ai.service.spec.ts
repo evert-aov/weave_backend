@@ -42,7 +42,7 @@ describe('AiService', () => {
   it('should forward the public chat DTO to the authenticated FastAPI bridge', async () => {
     const expected = {
       reply: 'Respuesta desde FastAPI',
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.8-flash',
       provider: 'vertex',
       timestamp: '2026-10-23T00:00:00+00:00',
     };
@@ -61,11 +61,22 @@ describe('AiService', () => {
     );
   });
 
+  it('should forward the model parameter when provided', async () => {
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({ reply: 'OK', model: 'gemini-4-argon' }),
+    } as Response);
+
+    await chat({ message: 'Hola', model: 'gemini-4-argon' });
+    const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
+    expect(body.model).toBe('gemini-4-argon');
+  });
+
   it('should preserve chat history and document context through the public validation pipe', async () => {
     const payload = {
       message: 'Resume el documento',
       history: [{ role: 'assistant', content: '¿Qué necesitas?' }],
-      documentContext: { title: 'Informe', docType: 'doc', content: 'x'.repeat(60_000) },
+      documentContext: { title: 'Informe', docType: 'doc', content: 'x'.repeat(600_000) },
       includeDocumentContext: true,
       persistHistory: false,
     };
@@ -83,7 +94,7 @@ describe('AiService', () => {
 
     const request = fetchSpy.mock.calls[0][1]!;
     expect(JSON.parse(request.body as string)).toEqual({
-      ...payload, documentContext: { ...payload.documentContext, content: 'x'.repeat(30_000) },
+      ...payload, documentContext: { ...payload.documentContext, content: 'x'.repeat(600_000) },
     });
   });
 
@@ -93,14 +104,14 @@ describe('AiService', () => {
       role: 'assistant', content: `${index}:` + 'x'.repeat(50_000),
     })) });
     const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
-    expect(body.history.reduce((sum: number, item: { content: string }) => sum + item.content.length, 0)).toBeLessThanOrEqual(24_000);
+    expect(body.history.reduce((sum: number, item: { content: string }) => sum + item.content.length, 0)).toBeLessThanOrEqual(60_000);
     expect(body.history.every((item: { content: string }) => item.content.length <= 12_000)).toBe(true);
     expect(body.history.at(-1).content.startsWith('29:')).toBe(true);
     expect(Buffer.byteLength(fetchSpy.mock.calls[0][1]!.body as string)).toBeLessThan(150_000);
   });
 
   it('rejects an oversized current prompt without calling the AI provider', async () => {
-    await expect(chat({ message: 'x'.repeat(12_001) })).rejects.toThrow(BadRequestException);
+    await expect(chat({ message: 'x'.repeat(250_001) })).rejects.toThrow(BadRequestException);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -217,7 +228,71 @@ describe('AiService', () => {
     expect(JSON.parse(fetchSpy.mock.calls.at(-1)![1]!.body as string).editTargets).toEqual(editTargets);
     await chat({ message: 'Hola', includeDocumentContext: false, editTargets });
     expect(JSON.parse(fetchSpy.mock.calls.at(-1)![1]!.body as string).editTargets).toBeUndefined();
-    await expect(chat({ message: 'Grande', editTargets: [{ id: 'a', text: 'x'.repeat(24_001) }] })).rejects.toThrow(BadRequestException);
+    await expect(chat({ message: 'Grande', editTargets: [{ id: 'a', text: 'x'.repeat(500_001) }] })).rejects.toThrow(BadRequestException);
+  });
+
+  it('forwards image attachments with their original MIME and binary data', async () => {
+    fetchSpy.mockResolvedValue({ok:true,json:async()=>({reply:'Listo'})} as Response);
+    const attachments=[{name:'image.png',mimeType:'image/png' as const,data:'iVBORw0KGgo='}];
+    await chat({message:'Describe',includeDocumentContext:false,attachments});
+    expect(JSON.parse(fetchSpy.mock.calls.at(-1)![1]!.body as string).attachments).toEqual(attachments);
+    await expect(chat({message:'Describe',attachments:[{...attachments[0],text:'invalid mix'}]})).rejects.toThrow(BadRequestException);
+  });
+
+  it('forwards explicit attachments even without the active document context', async () => {
+    fetchSpy.mockResolvedValue({ok:true,json:async()=>({reply:'Listo'})} as Response);
+    const attachments=[{name:'datos.txt',mimeType:'text/plain' as const,text:'Ventas 120'}];
+    await chat({message:'Analiza',includeDocumentContext:false,attachments});
+    expect(JSON.parse(fetchSpy.mock.calls.at(-1)![1]!.body as string).attachments).toEqual(attachments);
+    await expect(chat({message:'Analiza',attachments:[{name:'bad.pdf',mimeType:'application/pdf',data:'!invalid'}]})).rejects.toThrow(BadRequestException);
+  });
+
+  it('forwards audio attachments in Base64 and rejects unsupported audio types', async () => {
+    fetchSpy.mockResolvedValue({ ok: true, json: async () => ({ reply: 'Transcripción' }) } as Response);
+    const pipe = new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true });
+    for (const [name, mimeType] of [
+      ['nota.wav', 'audio/wav'],
+      ['nota.mp3', 'audio/mp3'],
+      ['nota.ogg', 'audio/ogg'],
+      ['nota.webm', 'audio/webm'],
+    ] as const) {
+      const dto = await pipe.transform(
+        {
+          message: 'Transcribe este audio',
+          includeDocumentContext: false,
+          attachments: [{ name, mimeType, data: 'UklGRg==' }],
+        },
+        { type: 'body', metatype: ChatRequestDto },
+      );
+      await chat(dto);
+      expect(JSON.parse(fetchSpy.mock.calls.at(-1)![1]!.body as string).attachments).toEqual([
+        { name, mimeType, data: 'UklGRg==' },
+      ]);
+    }
+    await expect(
+      pipe.transform(
+        {
+          message: 'Transcribe',
+          attachments: [{ name: 'song.mid', mimeType: 'audio/midi', data: 'TVRoZA==' }],
+        },
+        { type: 'body', metatype: ChatRequestDto },
+      ),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('returns generated images from gemini-2.5-flash-image unchanged', async () => {
+    const generated = {
+      reply: 'Imagen generada.',
+      model: 'gemini-2.5-flash-image',
+      provider: 'vertex',
+      timestamp: '2026-11-23T00:00:00+00:00',
+      images: [{ mimeType: 'image/png' as const, data: 'iVBORw0KGgo=' }],
+    };
+    fetchSpy.mockResolvedValue({ ok: true, json: async () => generated } as Response);
+
+    const result = await chat({ message: 'Genera una imagen', model: 'gemini-2.5-flash-image' });
+    expect(result).toEqual(generated);
+    expect(JSON.parse(fetchSpy.mock.calls.at(-1)![1]!.body as string).model).toBe('gemini-2.5-flash-image');
   });
 
 });

@@ -30,7 +30,7 @@ def select_engine(source):
         return "lualatex"
     if UNICODE_PACKAGES.intersection(packages):
         return "xelatex"
-    if re.search(r"\\(?:setmainfont|setsansfont|setmonofont|newfontfamily|newfontface|fontspec|defaultfontfeatures)\b", active):
+    if re.search(r"\\(?:setmainfont|setsansfont|setmonofont|newfontfamily|newfontface|babelfont|fontspec|defaultfontfeatures)\b", active):
         return "xelatex"
     return "pdflatex"
 
@@ -61,6 +61,10 @@ def compilation_hint(log):
         return ("[Weave] La imagen local del compilador LaTeX está desactualizada y no incluye "
                 "los paquetes científicos/de circuitos recientes. Reconstruye la imagen desde "
                 "backend/ con: docker build -t weave-latex:1 ./latex-compiler\n")
+    if re.search(r'Package fontspec Error:\s*The font "[^"]+" cannot be found', message):
+        return ("[Weave] La fuente solicitada no está instalada en el contenedor LaTeX. "
+                "Usa fuentes incluidas (Latin Modern, TeX Gyre, Liberation, DejaVu o Noto) "
+                "o reconstruye la imagen desde backend/ con: docker build -t weave-latex:1 ./latex-compiler\n")
     return ""
 
 def prepare_lua_cache():

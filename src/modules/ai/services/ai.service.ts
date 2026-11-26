@@ -11,8 +11,14 @@ import { ConfigService } from '@nestjs/config';
 import { ChatRequestDto } from '../dto/chat.dto';
 import { normalizeChatRequest } from '../dto/chat-limits';
 
+export interface GeneratedAiImage {
+  mimeType: 'image/png' | 'image/jpeg' | 'image/webp';
+  data: string;
+}
+
 export interface AiChatResponse {
   edits?: Array<{ target: string; before: string; after: string }>;
+  images?: GeneratedAiImage[];
   reply: string;
   model: string;
   provider: string;
@@ -27,6 +33,7 @@ export interface StoredAiMessage {
   content: string;
   timestamp: string;
   error: boolean;
+  images?: GeneratedAiImage[];
 }
 
 export interface AiHistoryPage {
@@ -81,7 +88,7 @@ export class AiService {
     }
 
     const configuredTimeout = Number(this.configService.get<string>('AI_SERVICE_TIMEOUT_MS'));
-    const timeout = Number.isFinite(configuredTimeout) ? configuredTimeout : 90_000;
+    const timeout = Number.isFinite(configuredTimeout) ? configuredTimeout : 1_260_000;
     try {
       const response = await fetch(`${serviceUrl}${path}`, {
         method,
