@@ -7,6 +7,7 @@ import {
   Put,
   UseGuards,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { NotesRepository } from '../repositories/notes.repository';
 import { SpecializedDocumentsService } from '../services/specialized-documents.service';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
@@ -17,6 +18,8 @@ import { CurrentUser } from '../../../common/decorators/current-user.decorator';
  * Expone endpoints REST dedicados bajo /api/notes/:id/document
  * para interactuar directamente con la carga útil del documento especializado.
  */
+@ApiTags('Specialized Documents')
+@ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('api/notes/:id/document')
 export class SpecializedDocumentsController {

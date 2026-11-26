@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, Post, Patch, Param, Query, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { AiService } from '../services/ai.service';
@@ -8,6 +9,8 @@ import { ChatRequestDto, ConversationTitleDto } from '../dto/chat.dto';
  * Controlador de Inteligencia Artificial para el Agente Weave AI.
  * Expone endpoints REST para interacción conversacional con acceso al contexto del documento.
  */
+@ApiTags('AI')
+@ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('api/ai')
 export class AiController {

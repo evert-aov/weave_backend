@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import * as fs from 'fs';
 import * as path from 'path';
 import { AppModule } from './app.module';
@@ -48,9 +49,26 @@ async function bootstrap() {
     }),
   );
 
+  // Documentación OpenAPI / Swagger en /api/docs
+  const swaggerConfig = new DocumentBuilder()
+    .setTitle('Weave API')
+    .setDescription('API REST de Weave (Notas, Documentos Word/Excel/LaTeX, Espacios, Activos e IA)')
+    .setVersion('1.0')
+    .addBearerAuth()
+    .build();
+  const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
+  SwaggerModule.setup('api/docs', app, swaggerDocument, {
+    jsonDocumentUrl: 'api/docs-json',
+    swaggerOptions: { persistAuthorization: true },
+  });
+
   const port = process.env.PORT || 5001;
-  await app.listen(port);
-  console.log(`🚀 Weave Backend running at http://localhost:${port}`);
+  await app.listen(port, '0.0.0.0');
+  const publicUrl = process.env.RAILWAY_PUBLIC_DOMAIN
+    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+    : `http://localhost:${port}`;
+  console.log(`🚀 Weave Backend running at ${publicUrl} (listening on 0.0.0.0:${port})`);
+  console.log(`📚 Swagger UI available at ${publicUrl}/api/docs`);
 }
 
 void bootstrap();

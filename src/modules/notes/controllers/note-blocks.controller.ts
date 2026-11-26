@@ -8,6 +8,7 @@ import {
   Put,
   UseGuards,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { NoteBlocksService } from '../services/note-blocks.service';
 import { CreateBlockDto, UpdateBlockDto, ReorderBlocksDto } from '../dto/block.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
@@ -18,6 +19,8 @@ import { CurrentUser } from '../../../common/decorators/current-user.decorator';
  * Expone endpoints REST dedicados bajo la sub-ruta /api/notes/:id/blocks
  * garantizando la segregación de interfaces (ISP) respecto al ciclo de vida general del documento.
  */
+@ApiTags('Note Blocks')
+@ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('api/notes/:id/blocks')
 export class NoteBlocksController {

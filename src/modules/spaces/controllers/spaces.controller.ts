@@ -8,6 +8,7 @@ import {
   Put,
   UseGuards,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { SpacesService } from '../services/spaces.service';
 import { CreateSpaceDto, UpdateSpaceDto } from '../dto/space.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
@@ -17,6 +18,8 @@ import { CurrentUser } from '../../../common/decorators/current-user.decorator';
  * Controlador de Espacios (Directorios).
  * Expone endpoints REST para listar, crear, editar y eliminar directorios de notas.
  */
+@ApiTags('Spaces')
+@ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('api/spaces')
 export class SpacesController {

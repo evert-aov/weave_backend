@@ -12,6 +12,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import * as path from 'path';
 import type { Request } from 'express';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AssetsService } from '../services/assets.service';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 
@@ -19,6 +20,8 @@ import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
  * Controlador de Activos.
  * Endpoint para subir imágenes y archivos desde el editor Word y bloques de Weave.
  */
+@ApiTags('Assets')
+@ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('api/assets')
 export class AssetsController {

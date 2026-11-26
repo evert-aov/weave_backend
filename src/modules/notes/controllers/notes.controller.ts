@@ -10,6 +10,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { NotesService } from '../services/notes.service';
 import { NoteBlocksService } from '../services/note-blocks.service';
 import { CreateNoteDto, UpdateNoteDto } from '../dto/note.dto';
@@ -22,6 +23,8 @@ import { CurrentUser } from '../../../common/decorators/current-user.decorator';
  * Expone endpoints REST protegidos para el ciclo de vida de los documentos.
  * Los endpoints de bloques son delegados a NoteBlocksService para asegurar compatibilidad.
  */
+@ApiTags('Notes')
+@ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('api/notes')
 export class NotesController {

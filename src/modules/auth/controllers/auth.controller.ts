@@ -7,6 +7,7 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthService } from '../services/auth.service';
 import { RegisterDto } from '../dto/register.dto';
 import { LoginDto } from '../dto/login.dto';
@@ -17,6 +18,8 @@ import { CurrentUser } from '../../../common/decorators/current-user.decorator';
  * Controlador de Autenticación.
  * Expone endpoints REST para registro, inicio de sesión y verificación de identidad.
  */
+@ApiTags('Auth')
+@ApiBearerAuth()
 @Controller('api/auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
