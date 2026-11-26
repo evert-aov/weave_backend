@@ -25,7 +25,7 @@ Los controladores traducen HTTP; los servicios coordinan reglas; los repositorio
 filtros de propietario y acceso a datos.
 
 [main.ts](../src/main.ts) crea `uploads/`, configura CORS y `ValidationPipe`, instala parsers
-JSON/urlencoded y abre el puerto. IA usa 1 MiB de JSON; las demás rutas conservan `100mb`.
+JSON/urlencoded y abre el puerto. IA usa 64 MiB de JSON; las demás rutas conservan `100mb`.
 Ver [puente de IA](06-PUENTE-DE-IA.md) para el orden de los parsers. Ese límite HTTP no es el límite BSON de MongoDB;
 los documentos especializados se guardan en archivos para evitar incluir toda su carga allí.
 
@@ -35,12 +35,12 @@ los documentos especializados se guardan en archivos para evitar incluir toda su
 
 | Variable | Uso efectivo |
 | --- | --- |
-| `PORT` | Puerto HTTP, por defecto `3000`. |
+| `PORT` | Puerto HTTP, por defecto `5001`. |
 | `MONGODB_URI` | Conexión Mongo; por defecto `mongodb://127.0.0.1:27017/weave_db`. |
 | `JWT_SECRET` | Firma y validación de tokens. Configurarlo explícitamente. |
-| `AI_SERVICE_URL` | URL interna de FastAPI, normalmente `http://127.0.0.1:8000`. |
+| `AI_SERVICE_URL` | URL interna de FastAPI, normalmente `http://127.0.0.1:5002`. |
 | `AI_SERVICE_TOKEN` | Secreto compartido con FastAPI, diferente del JWT. |
-| `AI_SERVICE_TIMEOUT_MS` | Timeout del puente, por defecto 90 000 ms. |
+| `AI_SERVICE_TIMEOUT_MS` | Timeout total del puente, por defecto 1 260 000 ms para hasta cuatro segmentos de salida de 300 s; ajustar junto con el timeout del proveedor. |
 | `ALLOWED_ORIGINS` | Lista leída por CORS; revisar el comportamiento del capítulo 02. |
 
 `JWT_EXPIRES_IN`, `UPLOAD_DIR` y `MAX_FILE_SIZE_MB` aparecen en el ejemplo histórico, pero no

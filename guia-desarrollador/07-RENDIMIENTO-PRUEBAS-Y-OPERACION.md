@@ -61,3 +61,10 @@ Compilar antes de ejecutar `npm run start:prod`. Conservar `.env` fuera del repo
 volumen durable para `uploads/`, respaldo Mongo y conectividad interna a FastAPI. El frontend
 necesita fallback SPA y un proxy correcto para `/api` y `/uploads` cuando se sirve desde otro
 proceso. La política actual de archivos públicos y CORS está descrita en el capítulo 02.
+
+## Tamaño físico de hojas
+
+El guardado de hojas comparte estilos y utiliza compresión sin pérdida cuando reduce el tamaño.
+No eliminar celdas vacías con formato para reducir peso. La API mantiene el modelo nativo y el
+lector acepta JSON anteriores y contenedores versionados. Ver [documentos y archivos](04-DOCUMENTOS-Y-ARCHIVOS.md#almacenamiento-compacto-de-hojas)
+para migración con respaldo y despliegue compatible.

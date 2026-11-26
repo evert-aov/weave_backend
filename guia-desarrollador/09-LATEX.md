@@ -26,7 +26,7 @@ multicol, booktabs, array, circuitikz, tikz, pgfplots y siunitx (`\usepackage[si
 `compile.py` da prioridad a **LuaLaTeX** cuando Babel usa `bidi=basic` o `bidi=basic-r`
 (incluidas opciones globales y `\PassOptionsToPackage`), o el documento usa paquetes/comandos
 propios de LuaTeX. En ausencia de estos requisitos, selecciona **XeLaTeX** si encuentra `fontspec`, `unicode-math`, `polyglossia`,
-`xltxtra`, `xunicode` o comandos como `\setmainfont`, `\setsansfont` y `\newfontfamily`.
+`xltxtra`, `xunicode` o comandos como `\setmainfont`, `\setsansfont`, `\newfontfamily` y `\babelfont`.
 Los documentos tradicionales siguen utilizando **pdfLaTeX**. Los comentarios y ejemplos
 verbatim no determinan el motor. Si una clase carga fontspec indirectamente y pdfLaTeX
 informa que requiere XeTeX/LuaTeX, se eliminan sus auxiliares y se vuelve a compilar con
@@ -41,7 +41,7 @@ Las imágenes anteriores pueden carecer de LuaLaTeX: reiniciar Nest no instala m
 `weave-latex:1` con el comando anterior (o la etiqueta configurada en `LATEX_DOCKER_IMAGE`).
 Las solicitudes siguientes usan la imagen reconstruida porque cada compilación crea un contenedor.
 
-La imagen incluye Latin Modern, TeX Gyre, Liberation y DejaVu, y prepara la caché de fontconfig
+La imagen incluye Latin Modern, TeX Gyre, Liberation, DejaVu y Noto (`Noto Sans`, `Noto Serif`, `Noto Sans Mono`), y prepara la caché de fontconfig
 durante el build. Ejemplo compatible:
 
 ```tex

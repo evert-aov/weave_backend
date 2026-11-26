@@ -31,7 +31,7 @@ cp .env.example .env
 npm run start:dev
 ```
 
-La API usa `http://localhost:3000/api`. Iniciar el proceso desde `backend/`: la configuración
+La API usa `http://localhost:5001/api`. Iniciar el proceso desde `backend/`: la configuración
 y las rutas de archivos se resuelven respecto al directorio de ejecución. No sobrescribir
 un `.env` existente al seguir el ejemplo.
 

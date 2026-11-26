@@ -97,8 +97,8 @@ src/
 Crea un archivo `.env` o `.env.local` en la raíz de `backend/`:
 
 ```env
-# Puerto del servidor (por defecto 3000)
-PORT=3000
+# Puerto del servidor (por defecto 5001)
+PORT=5001
 
 # Cadena de conexión de MongoDB
 MONGODB_URI=mongodb://127.0.0.1:27017/weave_db
@@ -110,9 +110,9 @@ JWT_SECRET=tu_clave_secreta_jwt_muy_segura
 JWT_EXPIRES_IN=7d
 
 # Puente interno de IA
-AI_SERVICE_URL=http://127.0.0.1:8000
+AI_SERVICE_URL=http://127.0.0.1:5002
 AI_SERVICE_TOKEN=the_same_secret_configured_in_ia
-AI_SERVICE_TIMEOUT_MS=90000
+AI_SERVICE_TIMEOUT_MS=1260000
 ```
 
 La expiración del JWT está actualmente fijada en `7d` en el módulo; `JWT_EXPIRES_IN` no
@@ -161,3 +161,12 @@ npm run test:e2e
 - **Validación Automática de DTOs**: `ValidationPipe` global con sanitización de campos y transformación tipada.
 - **Hashing Seguro de Contraseñas**: Implementación con `bcryptjs` con salt rounds reforzados.
 - **Estructura Modular**: Principios SOLID y arquitectura desacoplada basada en la inyección de dependencias nativa de NestJS.
+
+
+### Docker de desarrollo
+
+El Compose dev ejecuta `npm run start:docker`, que usa `nest-cli.docker.json` y
+`tsconfig.docker.json`. Compila en `/app/dist/dev`, dentro del volumen `/app/dist`.
+Así `deleteOutDir` limpia una subcarpeta y no intenta eliminar el punto de montaje
+(eso produce `EBUSY`). El arranque local conserva `npm run start:dev` con la salida
+habitual. Ver [configuración del stack](../README.md#docker-de-desarrollo-cambios-al-guardar).

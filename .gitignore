@@ -27,3 +27,6 @@ tmp/
 *.swp
 *.swo
 .DS_Store
+
+# Lossless document migration backups (private runtime data)
+backups/

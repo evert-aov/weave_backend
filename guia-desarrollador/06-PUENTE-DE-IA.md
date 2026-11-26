@@ -24,14 +24,16 @@ query string del cliente. `GET /api/ai/history` y `DELETE /api/ai/history` deleg
 borrado en `/internal/history`; `before` permite recuperar páginas anteriores. NestJS no
 crea una colección de mensajes ni almacena el historial.
 
-[normalizeChatRequest](../src/modules/ai/dto/chat-limits.ts) acota el envío antes de serializarlo
-para FastAPI: mensaje actual de hasta 12 000 caracteres; contexto de hasta 30 000; título de
-hasta 500 y tipo de hasta 100. Para operaciones sin estado conserva hasta 20 mensajes recientes, un máximo de 12 000
-caracteres por intervención y 24 000 en total. El mensaje actual no se recorta: si excede el
+[normalizeChatRequest](../src/modules/ai/dto/chat-limits.ts) normaliza el envío antes de serializarlo
+para FastAPI: mensaje actual de hasta 250 000 caracteres; contexto y presupuesto de edición de
+hasta 1 500 000; hasta 10 adjuntos (32 MiB codificados en total y 2,4 millones de caracteres de
+texto), con hasta 800 000 caracteres por archivo textual. Cada adjunto binario admite 4 MiB.
+Para operaciones sin estado conserva hasta 30 mensajes recientes, un máximo de 12 000 caracteres
+por intervención y 60 000 en total. El mensaje actual no se recorta: si excede el
 límite se devuelve `400`. Las URLs de datos binarias no se reenvían como texto de contexto.
 
 [configureRequestBodies](../src/common/http/request-body.ts) instala primero un parser JSON
-de 1 MiB para `/api/ai`, separado de los 100 MiB permitidos para el resto de documentos.
+de 64 MiB para `/api/ai`, separado de los 100 MiB permitidos para el resto de documentos.
 Nest arranca con `bodyParser: false` para respetar ese orden. CORS se registra antes de los
 parsers, de modo que el navegador pueda leer los errores de tamaño. El middleware de error
 devuelve un `413` con `code: PAYLOAD_TOO_LARGE`; registra método, ruta sin query, tamaño y
@@ -53,8 +55,8 @@ cambiar estas variables; no crear un fallback con una clave incrustada en TypeSc
 | Situación | Comportamiento público |
 | --- | --- |
 | Falta URL/token | 503, puente sin configurar. |
-| Petición de IA superior a 1 MiB | 413, JSON legible con `PAYLOAD_TOO_LARGE`. |
-| Mensaje actual de más de 12 000 caracteres | 400, dividir la consulta. |
+| Petición de IA superior a 64 MiB | 413, JSON legible con `PAYLOAD_TOO_LARGE`. |
+| Mensaje actual de más de 250 000 caracteres | 400, dividir la consulta. |
 | FastAPI rechaza el contrato con 422 | 400, indicando campo y tipo de error. |
 | Hay otro turno en curso o se borró el historial durante la generación | 409, recargar la conversación. |
 | Red, timeout u otro estado no exitoso | 502, mensaje del puente. |
@@ -75,8 +77,8 @@ almacenamiento a FastAPI. GET/DELETE `/api/ai/history` incluyen `conversationId`
 El propietario siempre viene del JWT, nunca del cuerpo. FastAPI verifica que ese usuario sea
 propietario del chat antes de resolver su ámbito MongoDB.
 
-`editTargets` admite 200 destinos `{id,text}`, hasta 15 000 caracteres por texto y un presupuesto
-conjunto de 24 000. Se rechaza el exceso, no se recorta una operación de edición silenciosamente.
+`editTargets` admite 10 000 destinos `{id,text}`, hasta 100 000 caracteres por destino y un presupuesto
+conjunto de 1 500 000 caracteres. Se rechaza el exceso, no se recorta una operación de edición silenciosamente.
 Con `includeDocumentContext: false` se omiten también los destinos editables. La respuesta puede
 contener `edits: [{target,before,after}]`; el gateway los retransmite. Angular comprueba conflictos,
 aplica en el editor vivo y utiliza las rutas normales de notas para guardar bajo el JWT. NestJS
