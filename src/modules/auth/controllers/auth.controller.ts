@@ -8,6 +8,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { AuthService } from '../services/auth.service';
 import { RegisterDto } from '../dto/register.dto';
 import { LoginDto } from '../dto/login.dto';
@@ -27,6 +28,7 @@ export class AuthController {
   /**
    * Endpoint para registrar una nueva cuenta de usuario.
    */
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('register')
   async register(@Body() registerDto: RegisterDto) {
     return this.authService.register(registerDto);
@@ -35,6 +37,7 @@ export class AuthController {
   /**
    * Endpoint para iniciar sesión con credenciales existentes.
    */
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   @Post('login')
   async login(@Body() loginDto: LoginDto) {

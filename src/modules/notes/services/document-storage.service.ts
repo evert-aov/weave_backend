@@ -1,6 +1,7 @@
 import { encodeSheetDocument, decodeSheetDocument } from './sheet-storage-codec';
 import { writeDocumentAtomically } from './atomic-document-file';
 import { Injectable, Logger } from '@nestjs/common';
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
@@ -8,12 +9,13 @@ import {
   PutObjectCommand,
   GetObjectCommand,
   DeleteObjectCommand,
+  ListObjectsV2Command,
+  DeleteObjectsCommand,
 } from '@aws-sdk/client-s3';
 
 /**
  * Contrato de almacenamiento para documentos especializados (hojas de cálculo,
  * documentos de texto enriquecido, lienzos vectoriales y presentaciones).
- * Sigue el principio de Inversión de Dependencias (DIP) y bajo acoplamiento.
  */
 export interface IDocumentStorageService {
   saveDocument(noteId: string, docType: string, data: any): Promise<string>;
@@ -23,11 +25,61 @@ export interface IDocumentStorageService {
   deleteDocument(noteId: string, docType?: string): Promise<void>;
 }
 
+const SAFE_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+const ALLOWED_DOC_TYPES = new Set(['doc', 'sheet', 'canvas', 'slide']);
+const INLINE_DATA_IMAGE_RE = /data:(image\/(?:png|jpeg|jpg|webp|gif|bmp|svg\+xml));base64,([A-Za-z0-9+/=]+)/gi;
+
+const EXT_BY_MIME: Record<string, string> = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/jpg': '.jpg',
+  'image/webp': '.webp',
+  'image/gif': '.gif',
+  'image/bmp': '.bmp',
+  'image/svg+xml': '.svg',
+};
+
+function sanitizeSvgBuffer(buffer: Buffer): Buffer {
+  const cleaned = buffer
+    .toString('utf8')
+    .replace(/<script\b[\s\S]*?<\/script>/gi, '')
+    .replace(/<(?:iframe|object|embed|foreignObject)\b[\s\S]*?<\/(?:iframe|object|embed|foreignObject)>/gi, '')
+    .replace(/<(?:iframe|object|embed|foreignObject)\b[^>]*\/?>/gi, '')
+    .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/javascript\s*:/gi, 'blocked:');
+  return Buffer.from(cleaned, 'utf8');
+}
+
+function hasValidImageMagicBytes(mime: string, buf: Buffer): boolean {
+  if (buf.length < 4) return false;
+  switch (mime) {
+    case 'image/png':
+      return buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
+    case 'image/jpeg':
+    case 'image/jpg':
+      return buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+    case 'image/gif':
+      return buf.subarray(0, 6).toString('ascii') === 'GIF87a' || buf.subarray(0, 6).toString('ascii') === 'GIF89a';
+    case 'image/webp':
+      return buf.length >= 12 && buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WEBP';
+    case 'image/bmp':
+      return buf[0] === 0x42 && buf[1] === 0x4d;
+    case 'image/svg+xml':
+      return /<svg[\s>]/i.test(buf.subarray(0, 512).toString('utf8'));
+    default:
+      return false;
+  }
+}
+
 /**
- * Servicio de Almacenamiento Físico de Documentos Asíncrono.
- * Gestiona la persistencia de payloads pesados en disco local y/o en Cloudflare R2
- * mediante I/O no bloqueante, liberando el Event Loop de Node.js y aislando
- * la lógica de archivos fuera de la capa de dominio.
+ * Servicio de Almacenamiento Físico de Documentos Asíncrono (Estructura por documento - Opción A).
+ *
+ * Estructura:
+ *   uploads/documents/{noteId}/{docType}.json
+ *   uploads/documents/{noteId}/presentation.pptx
+ *   uploads/documents/{noteId}/assets/img-{hash}.{ext}
+ *
+ * Mantiene compatibilidad de lectura con el formato plano legado (`{noteId}_{docType}.json`).
  */
 @Injectable()
 export class DocumentStorageService implements IDocumentStorageService {
@@ -36,9 +88,10 @@ export class DocumentStorageService implements IDocumentStorageService {
   private readonly s3Client: S3Client | null = null;
   private readonly pendingWrites = new Map<string, Promise<string>>();
   private readonly bucketName = process.env.R2_BUCKET_NAME || '';
+  private readonly publicUrl = (process.env.R2_PUBLIC_URL || '').replace(/\/+$/, '');
 
   constructor() {
-    this.ensureDirectoryExists();
+    this.ensureDirectoryExists(this.documentsDir);
 
     if (
       process.env.R2_ENDPOINT &&
@@ -58,38 +111,187 @@ export class DocumentStorageService implements IDocumentStorageService {
     }
   }
 
-  private ensureDirectoryExists(): void {
-    if (!fs.existsSync(this.documentsDir)) {
+  private assertSafeId(noteId: string): string {
+    if (!noteId || !SAFE_ID_RE.test(noteId)) {
+      throw new Error('Identificador de documento no válido');
+    }
+    return noteId;
+  }
+
+  private assertSafeDocType(docType: string): string {
+    if (!docType || !ALLOWED_DOC_TYPES.has(docType)) {
+      throw new Error('Tipo de documento no válido');
+    }
+    return docType;
+  }
+
+  private ensureDirectoryExists(dirPath: string): void {
+    if (!fs.existsSync(dirPath)) {
       try {
-        fs.mkdirSync(this.documentsDir, { recursive: true });
+        fs.mkdirSync(dirPath, { recursive: true });
       } catch (err) {
-        this.logger.warn(`No se pudo crear el directorio local ${this.documentsDir}: ${err}`);
+        this.logger.warn(`No se pudo crear el directorio local ${dirPath}: ${err}`);
       }
     }
   }
 
+  private getDocDir(noteId: string): string {
+    return path.join(this.documentsDir, this.assertSafeId(noteId));
+  }
+
+  private getDocAssetsDir(noteId: string): string {
+    return path.join(this.getDocDir(noteId), 'assets');
+  }
+
   private getDocFilePath(noteId: string, docType: string): string {
-    return path.join(this.documentsDir, `${noteId}_${docType}.json`);
+    return path.join(this.getDocDir(noteId), `${this.assertSafeDocType(docType)}.json`);
+  }
+
+  private getLegacyDocFilePath(noteId: string, docType: string): string {
+    return path.join(this.documentsDir, `${this.assertSafeId(noteId)}_${this.assertSafeDocType(docType)}.json`);
+  }
+
+  private getDocR2Key(noteId: string, docType: string): string {
+    return `uploads/documents/${this.assertSafeId(noteId)}/${this.assertSafeDocType(docType)}.json`;
+  }
+
+  private getLegacyDocR2Key(noteId: string, docType: string): string {
+    return `uploads/documents/${this.assertSafeId(noteId)}_${this.assertSafeDocType(docType)}.json`;
   }
 
   private getDocFileUrl(noteId: string, docType: string): string {
-    return `/uploads/documents/${noteId}_${docType}.json`;
+    return `/uploads/documents/${this.assertSafeId(noteId)}/${this.assertSafeDocType(docType)}.json`;
   }
 
   private getPptxFilePath(noteId: string): string {
-    return path.join(this.documentsDir, `${noteId}.pptx`);
+    return path.join(this.getDocDir(noteId), 'presentation.pptx');
+  }
+
+  private getLegacyPptxFilePath(noteId: string): string {
+    return path.join(this.documentsDir, `${this.assertSafeId(noteId)}.pptx`);
+  }
+
+  private getPptxR2Key(noteId: string): string {
+    return `uploads/documents/${this.assertSafeId(noteId)}/presentation.pptx`;
+  }
+
+  private getLegacyPptxR2Key(noteId: string): string {
+    return `uploads/documents/${this.assertSafeId(noteId)}.pptx`;
   }
 
   private getPptxFileUrl(noteId: string): string {
-    return `/uploads/documents/${noteId}.pptx`;
+    return `/uploads/documents/${this.assertSafeId(noteId)}/presentation.pptx`;
+  }
+
+  /**
+   * Extrae imágenes embebidas en Base64 (`data:image/...`) dentro del documento
+   * y las persiste como archivos binarios en `uploads/documents/{noteId}/assets/` (local + R2).
+   */
+  private async externalizeInlineImages(noteId: string, data: any): Promise<any> {
+    if (!data || typeof data !== 'object') return data;
+    const uploadedCache = new Map<string, string>();
+    const assetsDir = this.getDocAssetsDir(noteId);
+    let dirEnsured = false;
+
+    const persistDataUri = async (mimeRaw: string, b64: string): Promise<string | null> => {
+      const mime = mimeRaw.toLowerCase();
+      const ext = EXT_BY_MIME[mime];
+      if (!ext) return null;
+
+      let buffer: Buffer;
+      try {
+        buffer = Buffer.from(b64, 'base64');
+      } catch {
+        return null;
+      }
+      if (!buffer.length || !hasValidImageMagicBytes(mime, buffer)) return null;
+      if (mime === 'image/svg+xml') {
+        buffer = sanitizeSvgBuffer(buffer);
+      }
+
+      const hash = crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 16);
+      const filename = `img-${hash}${ext}`;
+      if (uploadedCache.has(filename)) return uploadedCache.get(filename)!;
+
+      const r2Key = `uploads/documents/${noteId}/assets/${filename}`;
+      const relativeUrl = `/uploads/documents/${noteId}/assets/${filename}`;
+      const finalUrl = this.publicUrl ? `${this.publicUrl}/${r2Key}` : relativeUrl;
+
+      if (!dirEnsured) {
+        this.ensureDirectoryExists(assetsDir);
+        dirEnsured = true;
+      }
+      const localPath = path.join(assetsDir, filename);
+      try {
+        if (!fs.existsSync(localPath)) {
+          await fs.promises.writeFile(localPath, buffer);
+        }
+      } catch (err) {
+        this.logger.warn(`No se pudo guardar localmente el activo ${filename} de ${noteId}: ${err}`);
+      }
+
+      if (this.s3Client && this.bucketName) {
+        try {
+          await this.s3Client.send(
+            new PutObjectCommand({
+              Bucket: this.bucketName,
+              Key: r2Key,
+              Body: buffer,
+              ContentType: mime,
+              CacheControl: 'public, max-age=31536000, immutable',
+            }),
+          );
+        } catch (err) {
+          this.logger.error(`Error subiendo activo ${r2Key} a R2:`, err);
+        }
+      }
+
+      uploadedCache.set(filename, finalUrl);
+      return finalUrl;
+    };
+
+    const transformString = async (value: string): Promise<string> => {
+      if (!value.includes('data:image/')) return value;
+      const matches = Array.from(value.matchAll(INLINE_DATA_IMAGE_RE));
+      if (!matches.length) return value;
+      let out = value;
+      for (const m of matches) {
+        const full = m[0];
+        const url = await persistDataUri(m[1], m[2]);
+        if (url) {
+          out = out.split(full).join(url);
+        }
+      }
+      return out;
+    };
+
+    const walk = async (node: any): Promise<any> => {
+      if (typeof node === 'string') return transformString(node);
+      if (Array.isArray(node)) {
+        for (let i = 0; i < node.length; i++) {
+          node[i] = await walk(node[i]);
+        }
+        return node;
+      }
+      if (node && typeof node === 'object') {
+        for (const key of Object.keys(node)) {
+          node[key] = await walk(node[key]);
+        }
+        return node;
+      }
+      return node;
+    };
+
+    return walk(data);
   }
 
   /**
    * Guarda de forma asíncrona los datos de un documento especializado (JSON).
-   * Persiste en Cloudflare R2 y mantiene copia en disco local si está disponible.
+   * Extrae imágenes Base64 a `assets/`, persiste en Cloudflare R2 y en disco local.
    */
   async saveDocument(noteId: string, docType: string, data: any): Promise<string> {
-    // Snapshot before awaiting another save: callers may keep editing the same object.
+    this.assertSafeId(noteId);
+    this.assertSafeDocType(docType);
     const snapshot = JSON.stringify(data ?? {});
     const key = `${noteId}:${docType}`;
     const previous = this.pendingWrites.get(key) || Promise.resolve('');
@@ -100,24 +302,27 @@ export class DocumentStorageService implements IDocumentStorageService {
   }
 
   private async persistDocument(noteId: string, docType: string, snapshot: string): Promise<string> {
+    const parsed = await this.externalizeInlineImages(noteId, JSON.parse(snapshot));
     const jsonContent = docType === 'sheet'
-      ? await encodeSheetDocument(JSON.parse(snapshot))
-      : Buffer.from(JSON.stringify(JSON.parse(snapshot), null, 2));
+      ? await encodeSheetDocument(parsed)
+      : Buffer.from(JSON.stringify(parsed, null, 2));
     const relativeUrl = this.getDocFileUrl(noteId, docType);
     let r2Saved = false;
     if (this.s3Client && this.bucketName) {
       try {
         await this.s3Client.send(new PutObjectCommand({
           Bucket: this.bucketName,
-          Key: `uploads/documents/${noteId}_${docType}.json`,
+          Key: this.getDocR2Key(noteId, docType),
           Body: jsonContent,
           ContentType: 'application/json',
         }));
         r2Saved = true;
       } catch (err) { this.logger.error(`Error saving document to R2 ${noteId} (${docType}):`, err); }
     }
-    try { await writeDocumentAtomically(this.getDocFilePath(noteId, docType), jsonContent); }
-    catch (err) {
+    try {
+      this.ensureDirectoryExists(this.getDocDir(noteId));
+      await writeDocumentAtomically(this.getDocFilePath(noteId, docType), jsonContent);
+    } catch (err) {
       if (!r2Saved) {
         this.logger.error(`Error saving physical document ${noteId} (${docType}):`, err);
         throw err;
@@ -127,35 +332,53 @@ export class DocumentStorageService implements IDocumentStorageService {
   }
 
   /**
-   * Lee de forma asíncrona los datos de un documento especializado (JSON).
-   * Intenta primero la lectura local; si no existe, recupera de Cloudflare R2.
+   * Lee un documento especializado intentando primero el layout por carpeta (`{noteId}/{docType}.json`)
+   * y haciendo fallback al formato plano legado (`{noteId}_{docType}.json`), en local y R2.
    */
   async readDocument(noteId: string, docType: string): Promise<any> {
-    const filePath = this.getDocFilePath(noteId, docType);
+    this.assertSafeId(noteId);
+    this.assertSafeDocType(docType);
     const decode = (raw: string) => docType === 'sheet' ? decodeSheetDocument(raw) : Promise.resolve(JSON.parse(raw));
+    const newPath = this.getDocFilePath(noteId, docType);
+    const legacyPath = this.getLegacyDocFilePath(noteId, docType);
     let failure: unknown;
-    try { return await decode(await fs.promises.readFile(filePath, 'utf8')); }
-    catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-        failure = err;
-        this.logger.warn(`No se pudo leer localmente ${noteId} (${docType}), consultando R2...`);
-      }
-    }
-    if (this.s3Client && this.bucketName) {
+
+    for (const candidatePath of [newPath, legacyPath]) {
       try {
-        const response = await this.s3Client.send(new GetObjectCommand({ Bucket: this.bucketName, Key: `uploads/documents/${noteId}_${docType}.json` }));
-        if (response.Body) {
-          const raw = await response.Body.transformToString('utf-8');
-          const parsed = await decode(raw);
-          try { await writeDocumentAtomically(filePath, raw); } catch { /* The verified R2 copy is still readable. */ }
-          return parsed;
-        }
+        return await decode(await fs.promises.readFile(candidatePath, 'utf8'));
       } catch (err) {
-        const missing = (err as { name?: string; $metadata?: { httpStatusCode?: number } }).name === 'NoSuchKey' || (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 404;
-        if (!missing) { failure = err; this.logger.error(`Error reading document from R2 ${noteId} (${docType}):`, err); }
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+          failure = err;
+          this.logger.warn(`No se pudo leer localmente ${candidatePath}, continuando...`);
+        }
       }
     }
-    // A damaged workbook must not look like a missing one and be overwritten by an empty default.
+
+    if (this.s3Client && this.bucketName) {
+      for (const r2Key of [this.getDocR2Key(noteId, docType), this.getLegacyDocR2Key(noteId, docType)]) {
+        try {
+          const response = await this.s3Client.send(new GetObjectCommand({ Bucket: this.bucketName, Key: r2Key }));
+          if (response.Body) {
+            const raw = await response.Body.transformToString('utf-8');
+            const parsed = await decode(raw);
+            try {
+              this.ensureDirectoryExists(this.getDocDir(noteId));
+              await writeDocumentAtomically(newPath, raw);
+            } catch { /* The verified R2 copy is still readable. */ }
+            return parsed;
+          }
+        } catch (err) {
+          const missing =
+            (err as { name?: string; $metadata?: { httpStatusCode?: number } }).name === 'NoSuchKey' ||
+            (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 404;
+          if (!missing) {
+            failure = err;
+            this.logger.error(`Error reading document from R2 ${r2Key}:`, err);
+          }
+        }
+      }
+    }
+
     if (failure) throw new Error(`No se pudo leer el documento ${noteId} (${docType}).`, { cause: failure });
     return null;
   }
@@ -164,25 +387,21 @@ export class DocumentStorageService implements IDocumentStorageService {
    * Guarda de forma asíncrona un archivo PowerPoint binario (.pptx) decodificando el base64.
    */
   async savePptx(noteId: string, base64: string): Promise<string> {
-    if (!base64) {
-      return '';
-    }
+    this.assertSafeId(noteId);
+    if (!base64) return '';
 
     const buffer = Buffer.from(base64, 'base64');
     const relativeUrl = this.getPptxFileUrl(noteId);
     let r2Saved = false;
 
-    // 1. Persistir en Cloudflare R2
     if (this.s3Client && this.bucketName) {
       try {
-        const key = `uploads/documents/${noteId}.pptx`;
         await this.s3Client.send(
           new PutObjectCommand({
             Bucket: this.bucketName,
-            Key: key,
+            Key: this.getPptxR2Key(noteId),
             Body: buffer,
-            ContentType:
-              'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            ContentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
           }),
         );
         r2Saved = true;
@@ -191,10 +410,9 @@ export class DocumentStorageService implements IDocumentStorageService {
       }
     }
 
-    // 2. Persistir en disco local
     try {
-      const filePath = this.getPptxFilePath(noteId);
-      await fs.promises.writeFile(filePath, buffer);
+      this.ensureDirectoryExists(this.getDocDir(noteId));
+      await fs.promises.writeFile(this.getPptxFilePath(noteId), buffer);
     } catch (err) {
       if (!r2Saved) {
         this.logger.error(`Error saving physical PPTX ${noteId}:`, err);
@@ -209,43 +427,42 @@ export class DocumentStorageService implements IDocumentStorageService {
    * Lee de forma asíncrona el archivo PowerPoint y lo convierte a base64.
    */
   async readPptxBase64(noteId: string): Promise<string | null> {
-    const filePath = this.getPptxFilePath(noteId);
+    this.assertSafeId(noteId);
+    const newPath = this.getPptxFilePath(noteId);
+    const legacyPath = this.getLegacyPptxFilePath(noteId);
 
-    // 1. Intentar disco local
-    try {
-      const exists = await fs.promises
-        .access(filePath, fs.constants.F_OK)
-        .then(() => true)
-        .catch(() => false);
-
-      if (exists) {
+    for (const filePath of [newPath, legacyPath]) {
+      try {
         const buffer = await fs.promises.readFile(filePath);
         return buffer.toString('base64');
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+          this.logger.warn(`No se pudo leer localmente PPTX ${filePath}, consultando R2...`);
+        }
       }
-    } catch (err) {
-      this.logger.warn(`No se pudo leer localmente PPTX ${noteId}, consultando R2...`);
     }
 
-    // 2. Intentar Cloudflare R2
     if (this.s3Client && this.bucketName) {
-      try {
-        const key = `uploads/documents/${noteId}.pptx`;
-        const response = await this.s3Client.send(
-          new GetObjectCommand({
-            Bucket: this.bucketName,
-            Key: key,
-          }),
-        );
-        if (response.Body) {
-          const bytes = await response.Body.transformToByteArray();
-          const base64 = Buffer.from(bytes).toString('base64');
-          try {
-            await fs.promises.writeFile(filePath, Buffer.from(bytes));
-          } catch {}
-          return base64;
+      for (const key of [this.getPptxR2Key(noteId), this.getLegacyPptxR2Key(noteId)]) {
+        try {
+          const response = await this.s3Client.send(new GetObjectCommand({ Bucket: this.bucketName, Key: key }));
+          if (response.Body) {
+            const bytes = await response.Body.transformToByteArray();
+            const base64 = Buffer.from(bytes).toString('base64');
+            try {
+              this.ensureDirectoryExists(this.getDocDir(noteId));
+              await fs.promises.writeFile(newPath, Buffer.from(bytes));
+            } catch {}
+            return base64;
+          }
+        } catch (err) {
+          const missing =
+            (err as { name?: string; $metadata?: { httpStatusCode?: number } }).name === 'NoSuchKey' ||
+            (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 404;
+          if (!missing) {
+            this.logger.error(`Error reading PPTX from R2 ${key}:`, err);
+          }
         }
-      } catch (err) {
-        this.logger.error(`Error reading PPTX from R2 ${noteId}:`, err);
       }
     }
 
@@ -253,50 +470,65 @@ export class DocumentStorageService implements IDocumentStorageService {
   }
 
   /**
-   * Elimina de forma asíncrona los archivos asociados a un documento tanto en local como en R2.
+   * Elimina la carpeta completa del documento (JSON + assets/imágenes + PPTX)
+   * y cualquier archivo legado tanto en disco local como en Cloudflare R2.
    */
   async deleteDocument(noteId: string, docType?: string): Promise<void> {
-    // 1. Limpieza local
+    this.assertSafeId(noteId);
+    // 1. Limpieza local: carpeta completa del documento + archivos legados
     try {
-      if (docType) {
-        if (docType === 'slide') {
-          await this.safeUnlink(this.getPptxFilePath(noteId));
-        }
-        await this.safeUnlink(this.getDocFilePath(noteId, docType));
-      } else {
-        const types = ['sheet', 'doc', 'canvas', 'slide'];
-        for (const t of types) {
-          await this.safeUnlink(this.getDocFilePath(noteId, t));
-        }
-        await this.safeUnlink(this.getPptxFilePath(noteId));
+      await fs.promises.rm(this.getDocDir(noteId), { recursive: true, force: true });
+      const types = docType && ALLOWED_DOC_TYPES.has(docType) ? [docType] : ['sheet', 'doc', 'canvas', 'slide'];
+      for (const t of types) {
+        await this.safeUnlink(this.getLegacyDocFilePath(noteId, t));
       }
+      await this.safeUnlink(this.getLegacyPptxFilePath(noteId));
     } catch (err) {
       this.logger.error(`Error deleting physical files for note ${noteId}:`, err);
     }
 
-    // 2. Limpieza en Cloudflare R2
+    // 2. Limpieza en Cloudflare R2: todo el prefijo `uploads/documents/{noteId}/` + claves legadas
     if (this.s3Client && this.bucketName) {
-      const keysToDelete: string[] = [];
-      if (docType) {
-        if (docType === 'slide') {
-          keysToDelete.push(`uploads/documents/${noteId}.pptx`);
-        }
-        keysToDelete.push(`uploads/documents/${noteId}_${docType}.json`);
-      } else {
-        for (const t of ['sheet', 'doc', 'canvas']) {
-          keysToDelete.push(`uploads/documents/${noteId}_${t}.json`);
-        }
-        keysToDelete.push(`uploads/documents/${noteId}.pptx`);
-      }
-
-      for (const key of keysToDelete) {
-        try {
-          await this.s3Client.send(
-            new DeleteObjectCommand({
+      try {
+        let continuationToken: string | undefined;
+        do {
+          const listed = await this.s3Client.send(
+            new ListObjectsV2Command({
               Bucket: this.bucketName,
-              Key: key,
+              Prefix: `uploads/documents/${noteId}/`,
+              ContinuationToken: continuationToken,
             }),
           );
+          const objects = (listed.Contents || [])
+            .map((item) => item.Key)
+            .filter((k): k is string => Boolean(k))
+            .map((Key) => ({ Key }));
+          if (objects.length) {
+            await this.s3Client.send(
+              new DeleteObjectsCommand({
+                Bucket: this.bucketName,
+                Delete: { Objects: objects, Quiet: true },
+              }),
+            );
+          }
+          continuationToken = listed.IsTruncated ? listed.NextContinuationToken : undefined;
+        } while (continuationToken);
+      } catch (err) {
+        this.logger.warn(`No se pudo limpiar el prefijo R2 uploads/documents/${noteId}/:`, err);
+      }
+
+      const legacyKeys: string[] = [];
+      if (docType && ALLOWED_DOC_TYPES.has(docType)) {
+        if (docType === 'slide') legacyKeys.push(this.getLegacyPptxR2Key(noteId));
+        legacyKeys.push(this.getLegacyDocR2Key(noteId, docType));
+      } else {
+        for (const t of ['sheet', 'doc', 'canvas']) legacyKeys.push(this.getLegacyDocR2Key(noteId, t));
+        legacyKeys.push(this.getLegacyPptxR2Key(noteId));
+      }
+
+      for (const key of legacyKeys) {
+        try {
+          await this.s3Client.send(new DeleteObjectCommand({ Bucket: this.bucketName, Key: key }));
         } catch (err) {
           this.logger.warn(`No se pudo eliminar de R2 la clave ${key}:`, err);
         }
@@ -306,13 +538,7 @@ export class DocumentStorageService implements IDocumentStorageService {
 
   private async safeUnlink(filePath: string): Promise<void> {
     try {
-      const exists = await fs.promises
-        .access(filePath, fs.constants.F_OK)
-        .then(() => true)
-        .catch(() => false);
-      if (exists) {
-        await fs.promises.unlink(filePath);
-      }
+      await fs.promises.unlink(filePath);
     } catch {
       // Ignorar si ya no existe
     }

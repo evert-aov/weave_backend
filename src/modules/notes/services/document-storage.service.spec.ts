@@ -21,32 +21,35 @@ describe('DocumentStorageService lossless storage', () => {
     jest.restoreAllMocks(); await fs.rm(directory, { recursive: true, force: true });
     for (const key of variables) { if (environment[key] === undefined) delete process.env[key]; else process.env[key] = environment[key]; }
   });
-  const file = (directory: string) => path.join(directory, 'note_sheet.json');
+  const file = (directory: string) => path.join(directory, 'note', 'sheet.json');
+  const legacyFile = (directory: string) => path.join(directory, 'note_sheet.json');
   function r2(client: { send: jest.Mock }) { (service as any).s3Client = client; (service as any).bucketName = 'test-bucket'; }
 
-  it('saves compact storage at the existing URL and reads back the full native model', async () => {
+  it('saves compact storage in the per-document folder and reads back the full native model', async () => {
     const input = workbook();
-    expect(await service.saveDocument('note', 'sheet', input)).toBe('/uploads/documents/note_sheet.json');
+    expect(await service.saveDocument('note', 'sheet', input)).toBe('/uploads/documents/note/sheet.json');
     const stored = await fs.readFile(file(directory));
     expect(stored.length).toBeLessThan(Buffer.byteLength(JSON.stringify(input)) / 5);
     expect(JSON.parse(stored.toString()).format).toBe('weave-sheet-storage');
     expect(await service.readDocument('note', 'sheet')).toEqual(input);
   });
-  it('still reads legacy documents without modifying their bytes', async () => {
+  it('still reads legacy flat documents without modifying their bytes', async () => {
     const input = workbook(), original = JSON.stringify(input, null, 2);
-    await fs.writeFile(file(directory), original);
+    await fs.writeFile(legacyFile(directory), original);
     expect(await service.readDocument('note', 'sheet')).toEqual(input);
-    expect(await fs.readFile(file(directory), 'utf8')).toBe(original);
+    expect(await fs.readFile(legacyFile(directory), 'utf8')).toBe(original);
   });
   it('keeps the previous document when publishing a save fails and cleans up the temporary file', async () => {
     const previous = JSON.stringify(workbook('previous'));
+    await fs.mkdir(path.join(directory, 'note'), { recursive: true });
     await fs.writeFile(file(directory), previous);
     jest.spyOn(fs, 'rename').mockRejectedValueOnce(new Error('rename failed'));
     await expect(service.saveDocument('note', 'sheet', workbook('new'))).rejects.toThrow('rename failed');
     expect(await fs.readFile(file(directory), 'utf8')).toBe(previous);
-    expect(await fs.readdir(directory)).toEqual(['note_sheet.json']);
+    expect(await fs.readdir(path.join(directory, 'note'))).toEqual(['sheet.json']);
   });
   it('does not turn a corrupt workbook into a missing document', async () => {
+    await fs.mkdir(path.join(directory, 'note'), { recursive: true });
     await fs.writeFile(file(directory), '{ broken JSON');
     await expect(service.readDocument('note', 'sheet')).rejects.toThrow('No se pudo leer');
     expect(await fs.readFile(file(directory), 'utf8')).toBe('{ broken JSON');
@@ -80,10 +83,21 @@ describe('DocumentStorageService lossless storage', () => {
     await expect(service.readDocument('note','sheet')).rejects.toThrow('No se pudo leer');
     expect(await fs.readdir(directory)).toEqual([]);
   });
-  it('leaves the other specialized JSON document formats unchanged', async () => {
+  it('leaves the other specialized JSON document formats unchanged and externalizes base64 PNGs to assets/', async () => {
     const document = { title: 'Doc', body: { html: '<p>Example</p>' } };
-    await service.saveDocument('note','doc',document);
-    expect(await fs.readFile(path.join(directory, 'note_doc.json'),'utf8')).toBe(JSON.stringify(document,null,2));
-    expect(await service.readDocument('note','doc')).toEqual(document);
+    await service.saveDocument('note', 'doc', document);
+    expect(await fs.readFile(path.join(directory, 'note', 'doc.json'), 'utf8')).toBe(JSON.stringify(document, null, 2));
+    expect(await service.readDocument('note', 'doc')).toEqual(document);
+
+    // 1x1 valid PNG in base64
+    const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const docWithImg = { title: 'ImgDoc', pages: [{ html: `<p><img src="data:image/png;base64,${pngBase64}" /></p>` }] };
+    await service.saveDocument('note-img', 'doc', docWithImg);
+    const saved = await service.readDocument('note-img', 'doc');
+    expect(saved.pages[0].html).toMatch(/\/uploads\/documents\/note-img\/assets\/img-[a-f0-9]{16}\.png/);
+    const assetFiles = await fs.readdir(path.join(directory, 'note-img', 'assets'));
+    expect(assetFiles).toHaveLength(1);
+    await service.deleteDocument('note-img', 'doc');
+    expect(await service.readDocument('note-img', 'doc')).toBeNull();
   });
 });

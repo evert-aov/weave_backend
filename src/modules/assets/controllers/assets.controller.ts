@@ -69,24 +69,27 @@ export class AssetsController {
   uploadFile(
     @UploadedFile() file: Express.Multer.File,
     @Req() req: Request,
+    @Body('noteId') bodyNoteId?: string,
   ) {
     if (!file) {
       throw new BadRequestException('No file provided for upload');
     }
+    const noteId = bodyNoteId || (typeof req.query?.['noteId'] === 'string' ? req.query['noteId'] : undefined);
     const protocol = req.protocol;
     const host = req.get('host');
     const baseUrl = `${protocol}://${host}`;
-    return this.assetsService.processUploadedFile(file, baseUrl);
+    return this.assetsService.processUploadedFile(file, baseUrl, noteId);
   }
 
   /**
-   * Sube una imagen codificada en base64 (Data URL) persistiendo su archivo físico en disco.
-   * Utilizado por el editor de Word para persistir imágenes incrustadas, arrastradas o pegadas.
+   * Sube una imagen codificada en base64 (Data URL) persistiendo su archivo físico en disco y R2.
+   * Si se recibe `noteId`, guarda la imagen dentro de `uploads/documents/{noteId}/assets/`.
    */
   @Post('upload-base64')
   async uploadBase64(
     @Body('dataUrl') dataUrl: string,
     @Body('filename') filename: string,
+    @Body('noteId') noteId: string,
     @Req() req: Request,
   ) {
     if (!dataUrl) {
@@ -95,6 +98,6 @@ export class AssetsController {
     const protocol = req.protocol;
     const host = req.get('host');
     const baseUrl = `${protocol}://${host}`;
-    return this.assetsService.uploadBase64Image(dataUrl, filename, baseUrl);
+    return this.assetsService.uploadBase64Image(dataUrl, filename, baseUrl, noteId);
   }
 }

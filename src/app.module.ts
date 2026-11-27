@@ -1,8 +1,8 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
-import { ServeStaticModule } from '@nestjs/serve-static';
-import * as path from 'path';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AuthModule } from './modules/auth/auth.module';
 import { NotesModule } from './modules/notes/notes.module';
 import { AssetsModule } from './modules/assets/assets.module';
@@ -12,7 +12,9 @@ import { AiModule } from './modules/ai/ai.module';
 
 /**
  * Módulo raíz de la aplicación Weave Backend.
- * Configura la conexión a MongoDB y monta los módulos de negocio.
+ * Configura la conexión a MongoDB, rate limiting global y monta los módulos de negocio.
+ * Los activos públicos se sirven de forma controlada desde `UploadsFallbackController`
+ * (nunca se exponen payloads privados `.json` / `.pptx` sin autenticación).
  */
 @Module({
   imports: [
@@ -20,6 +22,13 @@ import { AiModule } from './modules/ai/ai.module';
       isGlobal: true,
       envFilePath: ['.env.local', '.env'],
     }),
+    ThrottlerModule.forRoot([
+      {
+        name: 'default',
+        ttl: 60_000,
+        limit: 120,
+      },
+    ]),
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
@@ -30,16 +39,18 @@ import { AiModule } from './modules/ai/ai.module';
       }),
       inject: [ConfigService],
     }),
-    ServeStaticModule.forRoot({
-      rootPath: path.resolve(process.cwd(), 'uploads'),
-      serveRoot: '/uploads',
-    }),
     AuthModule,
     NotesModule,
     AssetsModule,
     SpacesModule,
     AiModule,
     LatexModule,
+  ],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
   ],
 })
 export class AppModule {}

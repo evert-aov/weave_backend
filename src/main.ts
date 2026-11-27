@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import helmet from 'helmet';
 import * as fs from 'fs';
 import * as path from 'path';
 import { AppModule } from './app.module';
@@ -18,20 +19,39 @@ async function bootstrap() {
   }
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: false });
+  app.set('trust proxy', 1);
 
-  // Habilitar CORS con configuración segura y compatible con credenciales
+  // Cabeceras de seguridad HTTP (X-Content-Type-Options, HSTS, Referrer-Policy, X-Frame-Options, etc.)
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+      contentSecurityPolicy: false,
+    }),
+  );
+
+  // Habilitar CORS estricto en producción y flexible solo en desarrollo
+  const isProd = process.env.NODE_ENV === 'production';
   const allowedOrigins = process.env.ALLOWED_ORIGINS
-    ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
+    ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
     : ['http://localhost:5000', 'http://127.0.0.1:5000'];
+
+  if (isProd && !process.env.ALLOWED_ORIGINS) {
+    console.warn('[Security] ALLOWED_ORIGINS no está definido en producción; restringiendo a dominios *.vercel.app y *.up.railway.app.');
+  }
 
   app.enableCors({
     origin: (origin, callback) => {
-      // Permitir peticiones sin origin (como curl, mobile apps o server-to-server) o que coincidan con la lista
-      if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
-        callback(null, true);
-      } else {
-        callback(null, true); // En desarrollo permitir origins dinámicos
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+        return callback(null, true);
       }
+      if (!isProd) {
+        return callback(null, true);
+      }
+      if (!process.env.ALLOWED_ORIGINS && /^https:\/\/[a-z0-9-]+\.(?:vercel\.app|up\.railway\.app)$/i.test(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error('Origin not allowed by CORS'), false);
     },
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
