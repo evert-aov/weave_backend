@@ -32,7 +32,7 @@ async function bootstrap() {
   // Habilitar CORS estricto en producción y flexible solo en desarrollo
   const isProd = process.env.NODE_ENV === 'production';
   const allowedOrigins = process.env.ALLOWED_ORIGINS
-    ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+    ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim().replace(/\/+$/, '')).filter(Boolean)
     : ['http://localhost:5000', 'http://127.0.0.1:5000'];
 
   if (isProd && !process.env.ALLOWED_ORIGINS) {
@@ -42,16 +42,17 @@ async function bootstrap() {
   app.enableCors({
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+      const normalized = origin.replace(/\/+$/, '');
+      if (allowedOrigins.includes(normalized) || allowedOrigins.includes('*')) {
         return callback(null, true);
       }
       if (!isProd) {
         return callback(null, true);
       }
-      if (!process.env.ALLOWED_ORIGINS && /^https:\/\/[a-z0-9-]+\.(?:vercel\.app|up\.railway\.app)$/i.test(origin)) {
+      if (!process.env.ALLOWED_ORIGINS && /^https:\/\/[a-z0-9-]+\.(?:vercel\.app|up\.railway\.app)$/i.test(normalized)) {
         return callback(null, true);
       }
-      return callback(new Error('Origin not allowed by CORS'), false);
+      return callback(null, false);
     },
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
